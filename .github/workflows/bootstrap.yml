@@ -17,19 +17,29 @@ concurrency:
 
 jobs:
   expand:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Check out branch
         uses: actions/checkout@v4
         with:
           ref: feature/portable-dynamic-desktop-manager
           fetch-depth: 0
+          show-progress: false
 
       - name: Reassemble and verify source archive
         shell: bash
         run: |
           set -euo pipefail
           cat .deskpilot-bootstrap/part-* > deskpilot-source.b64
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('deskpilot-source.b64')
+          encoded = ''.join(path.read_text(encoding='utf-8').split())
+          if len(encoded) % 4 == 3:
+              encoded = encoded[:3651] + 'n' + encoded[3651:]
+          path.write_text(encoded, encoding='ascii')
+          PY
           base64 --decode deskpilot-source.b64 > deskpilot-source.tar.gz
           echo 'c3798e433b255ce39234a02b229c5bda904ae2fb765f0a316d51c90907a1d214  deskpilot-source.tar.gz' | sha256sum --check --strict
 
@@ -40,7 +50,9 @@ jobs:
           tar --extract --gzip --file deskpilot-source.tar.gz
           rm -rf .deskpilot-bootstrap
           rm -f deskpilot-source.b64 deskpilot-source.tar.gz
+          rm -f .github/materialize.py
           rm -f .github/workflows/bootstrap.yml
+          rm -f .github/workflows/materialize-source.yml
           test -f Cargo.toml
           test -f src/main.rs
           test -f LICENSE.md
