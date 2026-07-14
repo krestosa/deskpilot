@@ -8,7 +8,7 @@ on:
       - '.github/workflows/finalize-0.1.3.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: deskpilot-finalize-0-1-3
@@ -76,13 +76,19 @@ jobs:
             throw "Unexpected version result: exit=$($process.ExitCode) stdout=[$stdout] stderr=[$stderr]"
           }
 
-      - name: Publish finalized source
+      - name: Stage validated source artifact
         shell: pwsh
         run: |
-          Remove-Item .github\workflows\finalize-0.1.3.yml -Force
-          git add -A
-          git diff --cached --check
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'Finalize DeskPilot 0.1.3 version and lockfile'
-          git push origin HEAD:fix/reliable-start-suppression-and-empty-compaction
+          New-Item -ItemType Directory -Force finalized-source\.github\workflows | Out-Null
+          Copy-Item Cargo.toml finalized-source\Cargo.toml
+          Copy-Item Cargo.lock finalized-source\Cargo.lock
+          Copy-Item .github\workflows\ci.yml finalized-source\.github\workflows\ci.yml
+          Copy-Item dist\DeskPilot-portable-0.1.3.zip finalized-source\DeskPilot-portable-0.1.3.zip
+
+      - name: Upload validated source and portable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeskPilot-0.1.3-finalized-source
+          path: finalized-source/**
+          if-no-files-found: error
+          retention-days: 14
