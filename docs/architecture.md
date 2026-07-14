@@ -1,3 +1,4 @@
+<!-- File purpose: Describes DeskPilot runtime components, data flow, safety boundaries, and lifecycle. -->
 # DeskPilot architecture
 
 ## Runtime shape

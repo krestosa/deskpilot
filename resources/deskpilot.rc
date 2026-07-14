@@ -1,1 +1,2 @@
+// File purpose: Binds the Windows application manifest into the executable as resource ID 1.
 1 RT_MANIFEST "resources/deskpilot.manifest"

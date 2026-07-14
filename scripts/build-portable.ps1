@@ -1,3 +1,4 @@
+# File purpose: Builds the portable DeskPilot distribution, checksum manifest, and package report.
 [CmdletBinding()]
 param(
     [string]$Configuration = 'release',

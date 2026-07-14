@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- File purpose: Declares Windows execution level and operating-system compatibility metadata for DeskPilot.exe. -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity version="1.0.0.0" processorArchitecture="amd64" name="DeskPilot" type="win32"/>
   <description>DeskPilot portable virtual desktop manager</description>

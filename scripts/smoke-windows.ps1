@@ -1,3 +1,4 @@
+# File purpose: Exercises real Explorer, virtual desktop, IPC, wheel-hook, and reconciliation behavior on Windows 11.
 [CmdletBinding()]
 param(
     [string]$Executable = (Join-Path $PSScriptRoot '..\target\x86_64-pc-windows-msvc\release\DeskPilot.exe'),
@@ -7,6 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+# Function purpose: Performs the Invoke DeskPilotRaw operation required by this module.
 function Invoke-DeskPilotRaw {
     param([string[]]$Arguments)
     $start = [System.Diagnostics.ProcessStartInfo]::new()
@@ -31,6 +33,7 @@ function Invoke-DeskPilotRaw {
     }
 }
 
+# Function purpose: Performs the Invoke DeskPilot operation required by this module.
 function Invoke-DeskPilot {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
     $result = Invoke-DeskPilotRaw -Arguments $Arguments
@@ -40,10 +43,12 @@ function Invoke-DeskPilot {
     return $result.Stdout
 }
 
+# Function purpose: Performs the Get Desktops operation required by this module.
 function Get-Desktops {
     return @(Invoke-DeskPilot desktops list --json | ConvertFrom-Json)
 }
 
+# Function purpose: Performs the Wait Until operation required by this module.
 function Wait-Until {
     param([scriptblock]$Condition, [string]$Failure, [int]$Seconds = 10)
     $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)

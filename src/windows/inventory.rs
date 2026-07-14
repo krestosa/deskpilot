@@ -1,3 +1,4 @@
+// File purpose: Enumerates top-level windows and classifies desktop occupancy conservatively.
 use crate::config::Config;
 use crate::reconciliation::{DesktopId, DesktopState, Occupancy};
 use std::collections::HashMap;
@@ -20,6 +21,7 @@ use super::desktops::{DesktopInfo, WinvdBackend};
 use super::system::current_process_id;
 use super::util::from_wide;
 
+// Function purpose: Builds a fresh ordered desktop snapshot with current occupancy and empty-grace state.
 pub fn snapshot(
     backend: &WinvdBackend,
     config: &Config,
@@ -80,6 +82,7 @@ pub fn snapshot(
         .collect())
 }
 
+// Function purpose: Locates window desktop.
 fn locate_window_desktop(
     backend: &WinvdBackend,
     desktops: &[DesktopInfo],
@@ -110,6 +113,7 @@ fn locate_window_desktop(
     matched
 }
 
+// Function purpose: Performs the exclusive fullscreen active operation required by this module.
 pub fn exclusive_fullscreen_active() -> bool {
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -159,7 +163,9 @@ struct BasicWindow {
     process_id: u32,
 }
 
+// Function purpose: Enumerates windows.
 fn enumerate_windows() -> Vec<HWND> {
+    // Function purpose: Handles the native callback callback and forwards only the relevant event.
     unsafe extern "system" fn callback(hwnd: HWND, parameter: LPARAM) -> BOOL {
         let windows = unsafe { &mut *(parameter as *mut Vec<HWND>) };
         windows.push(hwnd);
@@ -170,6 +176,7 @@ fn enumerate_windows() -> Vec<HWND> {
     windows
 }
 
+// Function purpose: Performs the inspect identity operation required by this module.
 fn inspect_identity(hwnd: HWND) -> Option<BasicWindow> {
     unsafe {
         if IsWindow(hwnd) == 0 {
@@ -192,6 +199,7 @@ fn inspect_identity(hwnd: HWND) -> Option<BasicWindow> {
     }
 }
 
+// Function purpose: Returns whether eligible application window.
 fn is_eligible_application_window(hwnd: HWND) -> bool {
     unsafe {
         if GetWindow(hwnd, GW_OWNER) != 0 {
@@ -205,6 +213,7 @@ fn is_eligible_application_window(hwnd: HWND) -> bool {
     }
 }
 
+// Function purpose: Returns whether foreground application window.
 fn is_foreground_application_window(hwnd: HWND) -> bool {
     unsafe {
         if IsWindowVisible(hwnd) == 0 || GetWindow(hwnd, GW_OWNER) != 0 || window_is_cloaked(hwnd) {
@@ -215,6 +224,7 @@ fn is_foreground_application_window(hwnd: HWND) -> bool {
     }
 }
 
+// Function purpose: Performs the window is cloaked operation required by this module.
 fn window_is_cloaked(hwnd: HWND) -> bool {
     unsafe {
         let mut cloaked = 0_u32;
@@ -228,6 +238,7 @@ fn window_is_cloaked(hwnd: HWND) -> bool {
     }
 }
 
+// Function purpose: Performs the executable name operation required by this module.
 fn executable_name(process_id: u32) -> Result<String, String> {
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id);
@@ -245,6 +256,7 @@ fn executable_name(process_id: u32) -> Result<String, String> {
     }
 }
 
+// Function purpose: Performs the rect covers operation required by this module.
 fn rect_covers(window: RECT, monitor: RECT) -> bool {
     window.left <= monitor.left
         && window.top <= monitor.top
@@ -252,6 +264,7 @@ fn rect_covers(window: RECT, monitor: RECT) -> bool {
         && window.bottom >= monitor.bottom
 }
 
+// Function purpose: Performs the ignored shell executable operation required by this module.
 fn ignored_shell_executable(executable: &str) -> bool {
     const EXECUTABLES: &[&str] = &[
         "backgroundTaskHost.exe",
@@ -277,6 +290,7 @@ fn ignored_shell_executable(executable: &str) -> bool {
         .any(|value| value.eq_ignore_ascii_case(executable))
 }
 
+// Function purpose: Performs the ignored class operation required by this module.
 fn ignored_class(class_name: &str) -> bool {
     const CLASSES: &[&str] = &[
         "ApplicationManager_DesktopShellWindow",
@@ -311,6 +325,7 @@ mod tests {
     use super::{ignored_class, ignored_shell_executable, rect_covers};
     use windows_sys::Win32::Foundation::RECT;
 
+    // Function purpose: Verifies the shell surfaces are not user applications scenario and its expected safety or state invariant.
     #[test]
     fn shell_surfaces_are_not_user_applications() {
         assert!(ignored_class("Progman"));
@@ -323,6 +338,7 @@ mod tests {
         assert!(!ignored_shell_executable("notepad.exe"));
     }
 
+    // Function purpose: Verifies the fullscreen requires monitor coverage scenario and its expected safety or state invariant.
     #[test]
     fn fullscreen_requires_monitor_coverage() {
         let monitor = RECT {

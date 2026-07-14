@@ -1,3 +1,4 @@
+// File purpose: Implements low-level keyboard and mouse hooks for Win+wheel navigation and Start-menu suppression.
 use crate::config::Config;
 use crate::wheel::{Step, WheelState};
 use std::mem::{size_of, zeroed};
@@ -43,6 +44,7 @@ pub struct HookController {
 }
 
 impl HookController {
+    // Function purpose: Starts the component and returns the controller used to update or stop it.
     pub fn start(config: Arc<RwLock<Config>>, navigation: Sender<Step>) -> Result<Self, String> {
         let initial_enabled = config.read().map_or(true, |value| value.enabled);
         let context = Arc::new(HookContext {
@@ -71,18 +73,22 @@ impl HookController {
         })
     }
 
+    // Function purpose: Updates enabled.
     pub fn set_enabled(&self, enabled: bool) {
         self.context.enabled.store(enabled, Ordering::Release);
     }
 
+    // Function purpose: Updates backend ready.
     pub fn set_backend_ready(&self, ready: bool) {
         self.context.backend_ready.store(ready, Ordering::Release);
     }
 
+    // Function purpose: Updates suspended.
     pub fn set_suspended(&self, suspended: bool) {
         self.context.suspended.store(suspended, Ordering::Release);
     }
 
+    // Function purpose: Stops the component, signals its worker thread, and waits for native resources to be released.
     pub fn stop(&mut self) {
         let thread_id = self.context.thread_id.load(Ordering::Acquire);
         if thread_id != 0 {
@@ -95,11 +101,13 @@ impl HookController {
 }
 
 impl Drop for HookController {
+    // Function purpose: Releases the native or background resource owned by this value when it leaves scope.
     fn drop(&mut self) {
         self.stop();
     }
 }
 
+// Function purpose: Performs the run hook loop operation required by this module.
 fn run_hook_loop(context: &HookContext) -> Result<(), String> {
     unsafe {
         context
@@ -128,6 +136,7 @@ fn run_hook_loop(context: &HookContext) -> Result<(), String> {
     Ok(())
 }
 
+// Function purpose: Handles low-level keyboard events, tracks physical Windows keys, and suppresses the final Win release after a consumed gesture.
 unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         if let Some(context) = CONTEXT.get() {
@@ -172,6 +181,7 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
     unsafe { CallNextHookEx(0 as HHOOK, code, wparam, lparam) }
 }
 
+// Function purpose: Handles low-level wheel events, recognizes Win+wheel steps, queues navigation, and consumes handled input.
 unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 && wparam as u32 == WM_MOUSEWHEEL {
         if let Some(context) = CONTEXT.get() {
@@ -207,12 +217,14 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
     unsafe { CallNextHookEx(0 as HHOOK, code, wparam, lparam) }
 }
 
+// Function purpose: Resets wheel.
 fn reset_wheel(context: &HookContext) {
     if let Ok(mut wheel) = context.wheel.try_lock() {
         wheel.reset();
     }
 }
 
+// Function purpose: Performs the win pressed operation required by this module.
 fn win_pressed(context: &HookContext) -> bool {
     context.left_win_down.load(Ordering::Acquire)
         || context.right_win_down.load(Ordering::Acquire)
@@ -222,6 +234,7 @@ fn win_pressed(context: &HookContext) -> bool {
         }
 }
 
+// Function purpose: Sends suppressed win release.
 fn send_suppressed_win_release(win_key: u16) -> bool {
     let inputs = suppressed_win_release_inputs(win_key);
     unsafe {
@@ -233,6 +246,7 @@ fn send_suppressed_win_release(win_key: u16) -> bool {
     }
 }
 
+// Function purpose: Performs the suppressed win release inputs operation required by this module.
 fn suppressed_win_release_inputs(win_key: u16) -> [INPUT; 3] {
     [
         keyboard_input(VK_CONTROL, false),
@@ -241,6 +255,7 @@ fn suppressed_win_release_inputs(win_key: u16) -> [INPUT; 3] {
     ]
 }
 
+// Function purpose: Performs the keyboard input operation required by this module.
 fn keyboard_input(key: u16, key_up: bool) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
@@ -261,6 +276,7 @@ mod tests {
     use super::suppressed_win_release_inputs;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{KEYEVENTF_KEYUP, VK_CONTROL, VK_LWIN};
 
+    // Function purpose: Verifies the start suppression replaces physical win up with control chord scenario and its expected safety or state invariant.
     #[test]
     fn start_suppression_replaces_physical_win_up_with_control_chord() {
         let inputs = suppressed_win_release_inputs(VK_LWIN);

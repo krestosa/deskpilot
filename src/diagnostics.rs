@@ -1,3 +1,4 @@
+// File purpose: Defines structured doctor, backend, occupancy, and runtime diagnostic payloads.
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -47,6 +48,7 @@ pub struct DoctorReport {
 }
 
 impl DoctorReport {
+    // Function purpose: Performs the unavailable operation required by this module.
     pub fn unavailable(data_directory: PathBuf, reason: impl Into<String>) -> Self {
         Self {
             timestamp: timestamp_utc(),

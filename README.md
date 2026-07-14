@@ -1,3 +1,4 @@
+<!-- File purpose: Explains DeskPilot installation, behavior, configuration, commands, build procedure, and security model. -->
 # DeskPilot
 
 DeskPilot is a small native Windows 11 utility that changes virtual desktops while either Windows key is held and the vertical mouse wheel is moved. It also maintains one known-empty spare desktop at the end of the ordered desktop list and removes known-empty internal desktops after a grace period.

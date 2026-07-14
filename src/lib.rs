@@ -1,3 +1,4 @@
+// File purpose: Exposes DeskPilot library modules and shared application constants.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod cli;

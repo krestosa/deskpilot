@@ -1,3 +1,4 @@
+<!-- File purpose: Records user-visible changes for each DeskPilot release. -->
 # Changelog
 
 ## 0.1.5

@@ -1,3 +1,4 @@
+# File purpose: Builds, tests, validates, packages, and archives DeskPilot on a hosted Windows runner.
 name: CI
 
 on:
@@ -91,6 +92,7 @@ jobs:
         shell: pwsh
         run: |
           $exe = (Resolve-Path '.\target\x86_64-pc-windows-msvc\release\DeskPilot.exe').Path
+          # Function purpose: Runs one DeskPilot command with redirected output and returns its exit code, stdout, and stderr for assertions.
           function Invoke-DeskPilotProcess {
             param([string]$Name, [string[]]$Arguments)
             $start = [System.Diagnostics.ProcessStartInfo]::new()

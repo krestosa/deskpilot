@@ -1,3 +1,4 @@
+# File purpose: Excludes local builds, portable packages, logs, configuration, and editor artifacts from version control.
 /target/
 /dist/
 /artifacts/

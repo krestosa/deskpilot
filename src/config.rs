@@ -1,3 +1,4 @@
+// File purpose: Defines portable configuration models, defaults, validation, migration, loading, and atomic persistence.
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -79,6 +80,7 @@ pub enum LogLevel {
 }
 
 impl Default for Config {
+    // Function purpose: Constructs the documented safe default value for this type.
     fn default() -> Self {
         Self {
             schema_version: CONFIG_SCHEMA_VERSION,
@@ -92,6 +94,7 @@ impl Default for Config {
 }
 
 impl Default for WheelConfig {
+    // Function purpose: Constructs the documented safe default value for this type.
     fn default() -> Self {
         Self {
             direction: WheelDirection::Normal,
@@ -103,6 +106,7 @@ impl Default for WheelConfig {
 }
 
 impl Default for DesktopConfig {
+    // Function purpose: Constructs the documented safe default value for this type.
     fn default() -> Self {
         Self {
             dynamic: true,
@@ -114,6 +118,7 @@ impl Default for DesktopConfig {
 }
 
 impl Default for WindowConfig {
+    // Function purpose: Constructs the documented safe default value for this type.
     fn default() -> Self {
         Self {
             suspend_in_exclusive_fullscreen: true,
@@ -124,6 +129,7 @@ impl Default for WindowConfig {
 }
 
 impl Default for LoggingConfig {
+    // Function purpose: Constructs the documented safe default value for this type.
     fn default() -> Self {
         Self {
             level: LogLevel::Info,
@@ -150,6 +156,7 @@ pub enum ConfigError {
 }
 
 impl Config {
+    // Function purpose: Performs the validate operation required by this module.
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.schema_version != CONFIG_SCHEMA_VERSION {
             return Err(ConfigError::Validation(format!(
@@ -209,6 +216,7 @@ impl Config {
         Ok(())
     }
 
+    // Function purpose: Performs the load operation required by this module.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let text = fs::read_to_string(path).map_err(|source| ConfigError::Io {
             path: path.to_path_buf(),
@@ -222,6 +230,7 @@ impl Config {
         Ok(config)
     }
 
+    // Function purpose: Loads or create.
     pub fn load_or_create(data_dir: &Path) -> Result<(Self, PathBuf), ConfigError> {
         let path = data_dir.join(CONFIG_FILE_NAME);
         if path.exists() {
@@ -237,6 +246,7 @@ impl Config {
         Ok((config, path))
     }
 
+    // Function purpose: Writes atomic.
     pub fn write_atomic(&self, path: &Path) -> Result<(), ConfigError> {
         self.validate()?;
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
@@ -269,6 +279,7 @@ impl Config {
     }
 }
 
+// Function purpose: Validates range.
 fn validate_range(key: &str, value: i64, minimum: i64, maximum: i64) -> Result<(), ConfigError> {
     if (minimum..=maximum).contains(&value) {
         Ok(())
@@ -279,11 +290,13 @@ fn validate_range(key: &str, value: i64, minimum: i64, maximum: i64) -> Result<(
     }
 }
 
+// Function purpose: Performs the to i64 operation required by this module.
 fn to_i64(value: u64) -> Result<i64, ConfigError> {
     i64::try_from(value)
         .map_err(|_| ConfigError::Validation("numeric value is too large".to_string()))
 }
 
+// Function purpose: Performs the replace file operation required by this module.
 #[cfg(windows)]
 fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
@@ -311,6 +324,7 @@ fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     }
 }
 
+// Function purpose: Performs the replace file operation required by this module.
 #[cfg(not(windows))]
 fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     fs::rename(source, destination)

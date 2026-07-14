@@ -1,3 +1,4 @@
+# File purpose: Measures startup time, working set, CPU use, handles, and threads in an interactive Windows session.
 [CmdletBinding()]
 param(
     [string]$Executable = (Join-Path $PSScriptRoot '..\target\x86_64-pc-windows-msvc\release\DeskPilot.exe'),
@@ -12,6 +13,7 @@ New-Item -ItemType Directory -Path $dataDir | Out-Null
 $args = @('--data-dir', $dataDir, 'run', '--foreground', '--no-tray')
 if ($SafeMode) { $args += @('--no-hook', '--no-dynamic') }
 
+# Function purpose: Performs the Invoke DeskPilotRaw operation required by this module.
 function Invoke-DeskPilotRaw {
     param([string[]]$Arguments)
     $start = [System.Diagnostics.ProcessStartInfo]::new()

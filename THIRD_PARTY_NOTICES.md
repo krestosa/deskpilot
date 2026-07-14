@@ -1,3 +1,4 @@
+<!-- File purpose: Documents third-party components and their applicable notices. -->
 # Third-party notices
 
 DeskPilot uses `winvd` 0.0.49 from VirtualDesktopAccessor to isolate the undocumented Windows 11 virtual desktop COM interfaces behind a narrow backend.

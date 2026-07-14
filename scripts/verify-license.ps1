@@ -1,3 +1,4 @@
+# File purpose: Verifies that LICENSE.md remains byte-identical to the approved PolyForm Strict license text.
 [CmdletBinding()]
 param(
     [string]$Path = (Join-Path $PSScriptRoot '..\LICENSE.md')
