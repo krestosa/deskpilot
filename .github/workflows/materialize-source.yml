@@ -6,6 +6,7 @@ on:
       - feature/portable-dynamic-desktop-manager
     paths:
       - .github/workflows/materialize-source.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
