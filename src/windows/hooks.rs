@@ -206,7 +206,7 @@ fn _assert_structs() {
 #[cfg(test)]
 mod tests {
     use super::start_suppression_inputs;
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_CONTROL, KEYEVENTF_KEYUP};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{KEYEVENTF_KEYUP, VK_CONTROL};
 
     #[test]
     fn start_suppression_emits_complete_control_chord() {
