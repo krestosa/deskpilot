@@ -2,7 +2,7 @@
 
 ## 0.1.5
 
-- Detect newly opened windows on the active desktop through the official virtual desktop manager path before internal GUID mapping.
+- Detect newly opened windows on the active desktop through the official `IVirtualDesktopManager::IsWindowOnCurrentVirtualDesktop` path before internal GUID mapping.
 - Prevent repeated window events from postponing reconciliation indefinitely; the earliest deadline wins and the watchdog can force an immediate pass.
 - Reconcile after successful wheel navigation so occupying the trailing spare always creates a new empty desktop.
 
