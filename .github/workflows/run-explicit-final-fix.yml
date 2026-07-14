@@ -31,15 +31,29 @@ jobs:
         shell: pwsh
         run: python tools/apply_final_fix.py
 
-      - name: Validate exact patched tree
+      - name: Check formatting
         shell: pwsh
-        run: |
-          cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets --locked -- -D warnings
-          cargo test --workspace --locked
-          cargo build --release --locked --target x86_64-pc-windows-msvc
-          .\scripts\verify-license.ps1
-          .\scripts\build-portable.ps1 -SkipBuild
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        shell: pwsh
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Run tests
+        shell: pwsh
+        run: cargo test --workspace --locked
+
+      - name: Build release
+        shell: pwsh
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Verify license
+        shell: pwsh
+        run: .\scripts\verify-license.ps1
+
+      - name: Build portable package
+        shell: pwsh
+        run: .\scripts\build-portable.ps1 -SkipBuild
 
       - name: Publish validated changes
         shell: pwsh
