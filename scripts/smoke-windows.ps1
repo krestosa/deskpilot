@@ -7,13 +7,37 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+function Invoke-DeskPilotRaw {
+    param([string[]]$Arguments)
+    $start = [System.Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $script:Exe
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.ArgumentList.Add('--data-dir')
+    $start.ArgumentList.Add($script:DataDir)
+    foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) }
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $start
+    $null = $process.Start()
+    $stdout = $process.StandardOutput.ReadToEnd()
+    $stderr = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    return [pscustomobject]@{
+        ExitCode = $process.ExitCode
+        Stdout = $stdout.TrimEnd()
+        Stderr = $stderr.TrimEnd()
+    }
+}
+
 function Invoke-DeskPilot {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    $output = & $script:Exe --data-dir $script:DataDir @Arguments 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "DeskPilot command failed ($LASTEXITCODE): $($Arguments -join ' ')`n$output"
+    $result = Invoke-DeskPilotRaw -Arguments $Arguments
+    if ($result.ExitCode -ne 0) {
+        throw "DeskPilot command failed ($($result.ExitCode)): $($Arguments -join ' ')`n$($result.Stderr)"
     }
-    return $output
+    return $result.Stdout
 }
 
 function Get-Desktops {
@@ -52,11 +76,11 @@ $process = $null
 $notepad = $null
 
 try {
-    & $script:Exe status --json *> $null
-    if ($LASTEXITCODE -eq 0) { throw 'A DeskPilot instance is already running; refusing to disturb it.' }
+    $existing = Invoke-DeskPilotRaw -Arguments @('status', '--json')
+    if ($existing.ExitCode -eq 0) { throw 'A DeskPilot instance is already running; refusing to disturb it.' }
 
     $process = Start-Process -FilePath $script:Exe -ArgumentList @('--data-dir', $script:DataDir, 'run', '--foreground', '--no-tray') -PassThru -WindowStyle Hidden
-    Wait-Until { & $script:Exe --data-dir $script:DataDir status --json *> $null; $LASTEXITCODE -eq 0 } 'DeskPilot did not become IPC-ready.'
+    Wait-Until { (Invoke-DeskPilotRaw -Arguments @('status', '--json')).ExitCode -eq 0 } 'DeskPilot did not become IPC-ready.'
     $report.checks.ipc = 'PASS'
 
     $doctor = Invoke-DeskPilot doctor --json | ConvertFrom-Json
@@ -120,7 +144,7 @@ public static class DeskPilotInputSmoke {
     }
 }
 '@
-    Invoke-DeskPilot desktops previous --json *> $null
+    Invoke-DeskPilot desktops previous --json | Out-Null
     $hookBefore = (Invoke-DeskPilot desktops current --json | ConvertFrom-Json).id
     [DeskPilotInputSmoke]::WinWheelDown()
     Wait-Until { (Invoke-DeskPilot desktops current --json | ConvertFrom-Json).id -ne $hookBefore } 'Synthetic Win+wheel did not change desktops.' 5
@@ -149,7 +173,7 @@ catch {
 finally {
     if ($notepad -and -not $notepad.HasExited) { Stop-Process -Id $notepad.Id -Force -ErrorAction SilentlyContinue }
     if ($process) {
-        & $script:Exe --data-dir $script:DataDir shutdown *> $null
+        $null = Invoke-DeskPilotRaw -Arguments @('shutdown')
         if (-not $process.HasExited) { $process.WaitForExit(5000) | Out-Null }
         if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
     }
