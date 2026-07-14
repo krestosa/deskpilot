@@ -26,6 +26,9 @@ pub enum Mutation {
         desktop: DesktopId,
         fallback: DesktopId,
     },
+    Switch {
+        desktop: DesktopId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -68,7 +71,7 @@ pub fn plan(desktops: &[DesktopState]) -> Plan {
             .rev()
             .find(|&index| !desktops[index].current)
         {
-            let fallback = trailing_empty_fallback(desktops, trailing_empty_start, removing);
+            let fallback = trailing_empty_fallback(trailing_empty_start, removing);
             return Plan {
                 mutations: vec![Mutation::Remove {
                     desktop: desktops[removing].id.clone(),
@@ -80,9 +83,7 @@ pub fn plan(desktops: &[DesktopState]) -> Plan {
     }
 
     for desktop in desktops.iter().take(last) {
-        if desktop.current
-            || desktop.occupancy != Occupancy::Empty
-            || !desktop.empty_grace_elapsed
+        if desktop.current || desktop.occupancy != Occupancy::Empty || !desktop.empty_grace_elapsed
         {
             continue;
         }
@@ -102,11 +103,7 @@ pub fn plan(desktops: &[DesktopState]) -> Plan {
     }
 }
 
-fn trailing_empty_fallback(
-    desktops: &[DesktopState],
-    trailing_empty_start: usize,
-    removing: usize,
-) -> usize {
+fn trailing_empty_fallback(trailing_empty_start: usize, removing: usize) -> usize {
     if removing > trailing_empty_start {
         removing - 1
     } else {
