@@ -39,7 +39,14 @@ pub fn snapshot(
         }
         let desktop = match backend.desktop_for_window(hwnd) {
             Ok(desktop) => desktop,
-            Err(_) => continue,
+            Err(_) => {
+                for state in occupancy.values_mut() {
+                    if *state == Occupancy::Empty {
+                        *state = Occupancy::Unknown;
+                    }
+                }
+                continue;
+            }
         };
         if !occupancy.contains_key(&desktop) {
             continue;
