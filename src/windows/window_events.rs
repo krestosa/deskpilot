@@ -4,11 +4,12 @@ use std::sync::mpsc::Sender;
 use std::sync::OnceLock;
 use std::thread::{self, JoinHandle};
 use windows_sys::Win32::Foundation::HWND;
-use windows_sys::Win32::System::Threading::{GetCurrentThreadId, PostThreadMessageW};
+use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetMessageW, SetWinEventHook, TranslateMessage, UnhookWinEvent, CHILDID_SELF,
-    EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE, HWINEVENTHOOK, MSG, OBJID_WINDOW,
-    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_QUIT,
+    DispatchMessageW, GetMessageW, PostThreadMessageW, TranslateMessage, CHILDID_SELF,
+    EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE, MSG, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
+    WINEVENT_SKIPOWNPROCESS, WM_QUIT,
 };
 
 static EVENT_SENDER: OnceLock<Sender<()>> = OnceLock::new();
@@ -91,7 +92,7 @@ unsafe extern "system" fn window_event_proc(
     _event_thread: u32,
     _event_time: u32,
 ) {
-    if hwnd != 0 && object_id == OBJID_WINDOW && child_id == CHILDID_SELF {
+    if hwnd != 0 && object_id == OBJID_WINDOW && child_id == CHILDID_SELF as i32 {
         if let Some(sender) = EVENT_SENDER.get() {
             let _ = sender.send(());
         }
