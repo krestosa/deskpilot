@@ -4,7 +4,9 @@ use crate::diagnostics::{BackendDiagnostic, DoctorReport, OccupancyDiagnostic};
 use crate::event::{Event, EventBus};
 use crate::ipc::{IpcResponse, IpcServer, ServerRequest};
 use crate::logging::{log, timestamp_utc, Logger};
-use crate::reconciliation::{plan, DesktopId, Mutation, Occupancy};
+use crate::reconciliation::{
+    DesktopId, Occupancy, ReconcileBackend, ReconcilePass, ReconcileRuntime,
+};
 use crate::support::create_support_bundle;
 use crate::tray::{Tray, TrayCommand};
 use crate::wheel::Step;
@@ -131,6 +133,7 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
         backend,
         events,
         empty_since: HashMap::new(),
+        reconciler: ReconcileRuntime::default(),
         last_reconciliation: None,
         hook_state: if options.no_hook {
             "disabled by --no-hook".to_string()
@@ -206,10 +209,14 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
                 now + Duration::from_millis(config_snapshot.desktops.watchdog_interval_ms);
         }
         if pending_reconcile.is_some_and(|deadline| now >= deadline) {
-            if config_snapshot.desktops.dynamic && !state.dynamic_forced_off {
-                state.reconcile();
-            }
-            pending_reconcile = None;
+            let follow_up = if config_snapshot.desktops.dynamic && !state.dynamic_forced_off {
+                matches!(state.reconcile(), ReconcilePass::Mutated(_))
+            } else {
+                false
+            };
+            pending_reconcile = follow_up.then(|| {
+                Instant::now() + Duration::from_millis(config_snapshot.desktops.reconcile_delay_ms)
+            });
             state.update_tray(tray.as_ref());
         }
     }
@@ -248,12 +255,55 @@ struct AppState {
     backend: WinvdBackend,
     events: Arc<EventBus>,
     empty_since: HashMap<DesktopId, Instant>,
+    reconciler: ReconcileRuntime,
     last_reconciliation: Option<String>,
     hook_state: String,
     ipc_state: String,
     dynamic_forced_off: bool,
     foreground: bool,
     shutdown: bool,
+}
+
+struct AppReconcileBackend<'a> {
+    backend: &'a WinvdBackend,
+    config: &'a Config,
+    empty_since: &'a mut HashMap<DesktopId, Instant>,
+}
+
+impl ReconcileBackend for AppReconcileBackend<'_> {
+    // Function purpose: Builds the current desktop snapshot and applies the configured empty-desktop grace period.
+    fn snapshot(&mut self) -> Result<Vec<crate::reconciliation::DesktopState>, String> {
+        let mut states = inventory::snapshot(self.backend, self.config, &HashMap::new())?;
+        let now = Instant::now();
+        let existing: HashSet<_> = states.iter().map(|state| state.id.clone()).collect();
+        self.empty_since.retain(|id, _| existing.contains(id));
+        for state in &mut states {
+            if state.occupancy == Occupancy::Empty {
+                let since = self.empty_since.entry(state.id.clone()).or_insert(now);
+                state.empty_grace_elapsed = now.duration_since(*since)
+                    >= Duration::from_millis(self.config.desktops.empty_grace_ms);
+            } else {
+                self.empty_since.remove(&state.id);
+                state.empty_grace_elapsed = false;
+            }
+        }
+        Ok(states)
+    }
+
+    // Function purpose: Creates exactly one desktop and returns its stable backend identifier for later observation.
+    fn create_desktop(&mut self) -> Result<DesktopId, String> {
+        self.backend.create().map(|desktop| desktop.id)
+    }
+
+    // Function purpose: Switches only when an explicit reconciliation mutation requests a desktop change.
+    fn switch_desktop(&mut self, desktop: &DesktopId) -> Result<(), String> {
+        self.backend.switch_to_id(desktop)
+    }
+
+    // Function purpose: Removes exactly one confirmed-empty desktop into the supplied safe fallback.
+    fn remove_desktop(&mut self, desktop: &DesktopId, fallback: &DesktopId) -> Result<(), String> {
+        self.backend.remove(desktop, fallback)
+    }
 }
 
 impl AppState {
@@ -293,72 +343,48 @@ impl AppState {
         }
     }
 
-    // Function purpose: Runs bounded desktop reconciliation and records or publishes the outcome.
-    fn reconcile(&mut self) {
+    // Function purpose: Applies one race-proof reconciliation mutation and reports whether a short follow-up pass is required.
+    fn reconcile(&mut self) -> ReconcilePass {
         if !self.backend.compatible() {
-            return;
+            return ReconcilePass::Blocked;
         }
-        let mut mutations = Vec::new();
-        for _ in 0..8 {
-            let snapshot = match self.snapshot() {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    self.error(format!("reconciliation snapshot failed: {error}"));
-                    return;
-                }
+
+        let config = self.config_read();
+        let result = {
+            let mut backend = AppReconcileBackend {
+                backend: &self.backend,
+                config: &config,
+                empty_since: &mut self.empty_since,
             };
-            let next = plan(&snapshot);
-            if next.stable {
+            self.reconciler.reconcile_once(&mut backend)
+        };
+
+        match result {
+            Ok(ReconcilePass::Mutated(mutation)) => {
                 self.last_reconciliation = Some(timestamp_utc());
-                if !mutations.is_empty() {
-                    self.publish("reconciled", format!("{} mutation(s)", mutations.len()));
-                }
-                return;
+                self.publish("reconciled", format!("applied {mutation:?}"));
+                ReconcilePass::Mutated(mutation)
             }
-            if next.mutations.is_empty() {
+            Ok(pass) => {
                 self.last_reconciliation = Some(timestamp_utc());
-                return;
+                pass
             }
-            for mutation in next.mutations {
-                let result = match &mutation {
-                    Mutation::CreateTrailing => self.backend.create().map(|_| ()),
-                    Mutation::Switch { desktop } => self.backend.switch_to_id(desktop),
-                    Mutation::Remove { desktop, fallback } => {
-                        self.backend.remove(desktop, fallback)
-                    }
-                };
-                match result {
-                    Ok(()) => mutations.push(mutation),
-                    Err(error) => {
-                        self.error(format!(
-                            "reconciliation mutation failed: {mutation:?}: {error}"
-                        ));
-                        return;
-                    }
-                }
+            Err(error) => {
+                self.error(format!("reconciliation failed: {error}"));
+                ReconcilePass::Blocked
             }
         }
-        self.error("reconciliation stopped at iteration limit".to_string());
     }
 
-    // Function purpose: Builds a fresh ordered desktop snapshot with current occupancy and empty-grace state.
+    // Function purpose: Builds the same grace-aware snapshot used by reconciliation for diagnostics without applying a mutation.
     fn snapshot(&mut self) -> Result<Vec<crate::reconciliation::DesktopState>, String> {
         let config = self.config_read();
-        let mut states = inventory::snapshot(&self.backend, &config, &HashMap::new())?;
-        let now = Instant::now();
-        let existing: HashSet<_> = states.iter().map(|state| state.id.clone()).collect();
-        self.empty_since.retain(|id, _| existing.contains(id));
-        for state in &mut states {
-            if state.occupancy == Occupancy::Empty {
-                let since = self.empty_since.entry(state.id.clone()).or_insert(now);
-                state.empty_grace_elapsed = now.duration_since(*since)
-                    >= Duration::from_millis(config.desktops.empty_grace_ms);
-            } else {
-                self.empty_since.remove(&state.id);
-                state.empty_grace_elapsed = false;
-            }
-        }
-        Ok(states)
+        let mut backend = AppReconcileBackend {
+            backend: &self.backend,
+            config: &config,
+            empty_since: &mut self.empty_since,
+        };
+        backend.snapshot()
     }
 
     // Function purpose: Handles tray.

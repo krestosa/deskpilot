@@ -2,5 +2,7 @@
 mod engine;
 mod model;
 
-pub use engine::{apply_plan, ReconcileBackend, ReconcileError, ReconcileReport};
+pub use engine::{
+    apply_plan, ReconcileBackend, ReconcileError, ReconcilePass, ReconcileReport, ReconcileRuntime,
+};
 pub use model::{plan, DesktopId, DesktopState, Mutation, Occupancy, Plan};

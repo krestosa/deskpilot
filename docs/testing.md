@@ -49,3 +49,8 @@ On a supported Windows 11 machine:
 9. Empty an internal desktop and verify it is removed only after the grace period without moving or closing windows.
 10. Restart Explorer and verify navigation/reconciliation recover.
 11. Run `DeskPilot.exe shutdown` and confirm hooks, icon and process exit.
+
+
+## Virtual delayed-topology simulation
+
+`tests/virtual_reconciliation.rs` models the observable delay between a successful virtual-desktop COM mutation and Explorer publishing the updated ordered desktop list. The simulator fires one hundred reconciliation triggers while a create remains invisible and asserts that only one create request exists. It also delays removals to prove that duplicate trailing empties compact serially to exactly one spare.

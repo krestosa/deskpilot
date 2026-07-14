@@ -93,3 +93,33 @@ fn reset_discards_partial_delta() {
     state.reset();
     assert_eq!(state.feed(60, 1_010, 120, 0, WheelDirection::Normal), None);
 }
+
+// Function purpose: Verifies that partial high-resolution Win+wheel input is consumed even before it produces a desktop step.
+#[test]
+fn partial_win_wheel_is_consumed_without_navigation() {
+    let mut state = WheelState::default();
+    let gesture = state.gesture(true, 30, 1_000, 120, 180, WheelDirection::Normal);
+    assert!(gesture.consume);
+    assert_eq!(gesture.step, None);
+}
+
+// Function purpose: Verifies that cooldown-suppressed wheel messages remain captured and cannot scroll the foreground application.
+#[test]
+fn cooldown_wheel_is_consumed_without_leaking_to_application() {
+    let mut state = WheelState::default();
+    let first = state.gesture(true, -120, 1_000, 120, 180, WheelDirection::Normal);
+    let second = state.gesture(true, -120, 1_050, 120, 180, WheelDirection::Normal);
+    assert!(first.consume);
+    assert_eq!(first.step, Some(Step::Next));
+    assert!(second.consume);
+    assert_eq!(second.step, None);
+}
+
+// Function purpose: Verifies that ordinary wheel input remains available to applications whenever Win is not part of the gesture.
+#[test]
+fn ordinary_wheel_without_win_is_not_consumed() {
+    let mut state = WheelState::default();
+    let gesture = state.gesture(false, -120, 1_000, 120, 180, WheelDirection::Normal);
+    assert!(!gesture.consume);
+    assert_eq!(gesture.step, None);
+}

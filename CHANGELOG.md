@@ -1,6 +1,13 @@
 <!-- File purpose: Records user-visible changes for each DeskPilot release. -->
 # Changelog
 
+## 0.1.6
+
+- Serialize desktop creation and removal behind an observed-topology fence so delayed Windows enumeration cannot create up to eight duplicate desktops.
+- Reconcile at most one topology mutation per pass and wait for the corresponding desktop event or watchdog snapshot before continuing.
+- Consume every vertical and horizontal wheel message while an active Win gesture is in progress, including partial deltas and cooldown-suppressed events, so the foreground application never scrolls.
+- Add virtual delayed-backend tests covering one hundred rapid triggers, delayed creation visibility, and serial empty-desktop compaction.
+
 ## 0.1.5
 
 - Detect newly opened windows on the active desktop through the official `IVirtualDesktopManager::IsWindowOnCurrentVirtualDesktop` path before internal GUID mapping.

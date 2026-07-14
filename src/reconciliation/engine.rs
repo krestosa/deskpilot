@@ -1,4 +1,4 @@
-// File purpose: Executes bounded reconciliation plans against an abstract desktop backend.
+// File purpose: Executes one race-proof reconciliation mutation at a time and waits until Windows exposes the resulting topology.
 use thiserror::Error;
 
 use super::{plan, DesktopId, DesktopState, Mutation};
@@ -6,11 +6,11 @@ use super::{plan, DesktopId, DesktopState, Mutation};
 pub trait ReconcileBackend {
     // Function purpose: Builds a fresh ordered desktop snapshot with current occupancy and empty-grace state.
     fn snapshot(&mut self) -> Result<Vec<DesktopState>, String>;
-    // Function purpose: Creates desktop.
+    // Function purpose: Creates one desktop and returns the identifier reported by the backend.
     fn create_desktop(&mut self) -> Result<DesktopId, String>;
-    // Function purpose: Switches desktop.
+    // Function purpose: Switches to a specific desktop when an explicit plan requests it.
     fn switch_desktop(&mut self, desktop: &DesktopId) -> Result<(), String>;
-    // Function purpose: Removes desktop.
+    // Function purpose: Removes one desktop using the supplied safe fallback desktop.
     fn remove_desktop(&mut self, desktop: &DesktopId, fallback: &DesktopId) -> Result<(), String>;
 }
 
@@ -27,48 +27,135 @@ pub enum ReconcileError {
     Snapshot(String),
     #[error("mutation failed: {operation}: {cause}")]
     Mutation { operation: String, cause: String },
-    #[error("reconciliation made no progress")]
-    NoProgress,
     #[error("reconciliation exceeded {0} iterations")]
     IterationLimit(usize),
 }
 
-// Function purpose: Repeatedly snapshots and mutates a backend until reconciliation is stable or a safety bound is reached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PendingTopologyMutation {
+    Create {
+        expected: DesktopId,
+        baseline_count: usize,
+    },
+    Remove {
+        desktop: DesktopId,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReconcilePass {
+    Stable,
+    Blocked,
+    WaitingForTopology,
+    Mutated(Mutation),
+}
+
+#[derive(Debug, Default)]
+pub struct ReconcileRuntime {
+    pending: Option<PendingTopologyMutation>,
+}
+
+impl ReconcileRuntime {
+    // Function purpose: Applies at most one mutation and refuses further mutations until a later snapshot confirms the previous topology change.
+    pub fn reconcile_once<B: ReconcileBackend>(
+        &mut self,
+        backend: &mut B,
+    ) -> Result<ReconcilePass, ReconcileError> {
+        let snapshot = backend.snapshot().map_err(ReconcileError::Snapshot)?;
+        if !self.pending_observed(&snapshot) {
+            return Ok(ReconcilePass::WaitingForTopology);
+        }
+
+        let next = plan(&snapshot);
+        if next.stable {
+            return Ok(ReconcilePass::Stable);
+        }
+        let Some(mutation) = next.mutations.into_iter().next() else {
+            return Ok(ReconcilePass::Blocked);
+        };
+
+        match &mutation {
+            Mutation::CreateTrailing => {
+                let created =
+                    backend
+                        .create_desktop()
+                        .map_err(|cause| ReconcileError::Mutation {
+                            operation: format!("{mutation:?}"),
+                            cause,
+                        })?;
+                self.pending = Some(PendingTopologyMutation::Create {
+                    expected: created,
+                    baseline_count: snapshot.len(),
+                });
+            }
+            Mutation::Remove { desktop, fallback } => {
+                backend.remove_desktop(desktop, fallback).map_err(|cause| {
+                    ReconcileError::Mutation {
+                        operation: format!("{mutation:?}"),
+                        cause,
+                    }
+                })?;
+                self.pending = Some(PendingTopologyMutation::Remove {
+                    desktop: desktop.clone(),
+                });
+            }
+            Mutation::Switch { desktop } => {
+                backend
+                    .switch_desktop(desktop)
+                    .map_err(|cause| ReconcileError::Mutation {
+                        operation: format!("{mutation:?}"),
+                        cause,
+                    })?;
+            }
+        }
+
+        Ok(ReconcilePass::Mutated(mutation))
+    }
+
+    // Function purpose: Clears the in-flight barrier only after a snapshot proves that the requested create or remove became visible.
+    fn pending_observed(&mut self, snapshot: &[DesktopState]) -> bool {
+        let observed = match &self.pending {
+            None => true,
+            Some(PendingTopologyMutation::Create {
+                expected,
+                baseline_count,
+            }) => {
+                snapshot.iter().any(|desktop| &desktop.id == expected)
+                    || snapshot.len() > *baseline_count
+            }
+            Some(PendingTopologyMutation::Remove { desktop }) => {
+                snapshot.iter().all(|state| &state.id != desktop)
+            }
+        };
+        if observed {
+            self.pending = None;
+        }
+        observed
+    }
+
+    // Function purpose: Reports whether a successful mutation is still awaiting confirmation from Windows.
+    pub fn is_waiting_for_topology(&self) -> bool {
+        self.pending.is_some()
+    }
+}
+
+// Function purpose: Runs deterministic backends to convergence while preserving the same one-mutation and observation barrier used by the application.
 pub fn apply_plan<B: ReconcileBackend>(
     backend: &mut B,
     max_iterations: usize,
 ) -> Result<ReconcileReport, ReconcileError> {
     let mut report = ReconcileReport::default();
-    let mut previous_fingerprint = None;
+    let mut runtime = ReconcileRuntime::default();
 
     for iteration in 0..max_iterations {
         report.iterations = iteration + 1;
-        let snapshot = backend.snapshot().map_err(ReconcileError::Snapshot)?;
-        let fingerprint = format!("{snapshot:?}");
-        let next = plan(&snapshot);
-        if next.stable {
-            report.stable = true;
-            return Ok(report);
-        }
-        if next.mutations.is_empty() {
-            return Ok(report);
-        }
-        if previous_fingerprint.as_ref() == Some(&fingerprint) && iteration > 0 {
-            return Err(ReconcileError::NoProgress);
-        }
-        previous_fingerprint = Some(fingerprint);
-
-        for mutation in next.mutations {
-            let result = match &mutation {
-                Mutation::CreateTrailing => backend.create_desktop().map(|_| ()),
-                Mutation::Switch { desktop } => backend.switch_desktop(desktop),
-                Mutation::Remove { desktop, fallback } => backend.remove_desktop(desktop, fallback),
-            };
-            result.map_err(|cause| ReconcileError::Mutation {
-                operation: format!("{mutation:?}"),
-                cause,
-            })?;
-            report.mutations.push(mutation);
+        match runtime.reconcile_once(backend)? {
+            ReconcilePass::Stable => {
+                report.stable = true;
+                return Ok(report);
+            }
+            ReconcilePass::Blocked | ReconcilePass::WaitingForTopology => return Ok(report),
+            ReconcilePass::Mutated(mutation) => report.mutations.push(mutation),
         }
     }
 
