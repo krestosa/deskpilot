@@ -55,7 +55,8 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add Cargo.toml Cargo.lock CHANGELOG.md .github/workflows/ci.yml src tests
+          git checkout -- .github/workflows/ci.yml
+          git add Cargo.toml Cargo.lock CHANGELOG.md src tests
           if (git diff --cached --quiet) {
             Write-Host 'No application changes to publish.'
             exit 0
