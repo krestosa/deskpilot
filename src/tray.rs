@@ -13,10 +13,11 @@ use windows_sys::Win32::UI::Shell::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuItem, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
     DispatchMessageW, GetCursorPos, GetMessageW, LoadIconW, PostMessageW, PostQuitMessage,
-    RegisterClassW, SetForegroundWindow, TrackPopupMenu, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
-    CW_USEDEFAULT, IDI_APPLICATION, IDI_ERROR, IDI_WARNING, MF_CHECKED, MF_SEPARATOR, MF_STRING,
-    MF_UNCHECKED, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE,
-    WM_COMMAND, WM_DESTROY, WM_LBUTTONDBLCLK, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
+    RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu, TranslateMessage,
+    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, IDI_APPLICATION, IDI_ERROR, IDI_WARNING, MF_CHECKED,
+    MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON,
+    WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_LBUTTONDBLCLK, WM_RBUTTONUP, WNDCLASSW,
+    WS_OVERLAPPED,
 };
 
 use crate::config::{NavigationMode, WheelDirection};
@@ -39,6 +40,7 @@ const CMD_EXIT: usize = 1011;
 
 static COMMAND_SENDER: OnceLock<Sender<TrayCommand>> = OnceLock::new();
 static STATE: OnceLock<Arc<TrayState>> = OnceLock::new();
+static TASKBAR_CREATED: OnceLock<u32> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayCommand {
@@ -159,6 +161,10 @@ impl Drop for Tray {
 fn tray_loop(ready: Sender<Result<(), String>>) -> Result<(), String> {
     unsafe {
         let module = GetModuleHandleW(std::ptr::null());
+        let taskbar_created = RegisterWindowMessageW(wide("TaskbarCreated").as_ptr());
+        if taskbar_created != 0 {
+            let _ = TASKBAR_CREATED.set(taskbar_created);
+        }
         let class_name = wide(format!("DeskPilot.Tray.{}", GetCurrentProcessId()));
         let window_class = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW,
@@ -212,6 +218,14 @@ unsafe extern "system" fn window_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if TASKBAR_CREATED
+        .get()
+        .is_some_and(|registered| message == *registered)
+    {
+        restore_icon(hwnd);
+        return 0;
+    }
+
     match message {
         CALLBACK_MESSAGE => {
             match lparam as u32 {
@@ -344,7 +358,14 @@ unsafe fn check(menu: isize, id: usize, checked: bool) {
 }
 
 fn add_icon(hwnd: HWND) {
-    update_icon(hwnd, false, true);
+    restore_icon(hwnd);
+}
+
+fn restore_icon(hwnd: HWND) {
+    let state = STATE.get();
+    let enabled = state.is_none_or(|value| value.enabled.load(Ordering::Acquire));
+    let error = state.is_some_and(|value| value.error.load(Ordering::Acquire));
+    update_icon(hwnd, error, enabled);
 }
 
 fn update_icon(hwnd: HWND, error: bool, enabled: bool) {

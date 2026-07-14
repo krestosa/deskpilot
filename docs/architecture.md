@@ -4,13 +4,14 @@
 
 DeskPilot is one native Rust process. It has no service, browser runtime, updater, network client or injected code. Double-clicking `DeskPilot.exe` starts tray mode without a console. A terminal invocation attaches to the parent console and either performs a local command or sends a request to the running tray instance.
 
-The process uses five bounded execution contexts:
+The process uses six bounded execution contexts:
 
 1. The application coordinator owns configuration, backend mutation, reconciliation and shutdown.
 2. The tray thread owns its hidden Win32 window and notification icon.
 3. The low-level mouse-hook thread owns `WH_MOUSE_LL` and performs only gesture classification and queue submission.
 4. The named-pipe acceptor creates short-lived client handlers; command execution remains serialized by the application coordinator.
 5. The `winvd` notification worker receives virtual-desktop events and forwards a coalesced signal.
+6. The out-of-context WinEvent thread observes top-level window create, destroy, show and hide events and forwards only a coalesced reconcile signal.
 
 No general asynchronous runtime is used. Channels are from `std::sync::mpsc`; the main coordinator sleeps on `recv_timeout` until an event, reconcile deadline or watchdog deadline.
 
@@ -20,6 +21,7 @@ No general asynchronous runtime is used. Channels are from `std::sync::mpsc`; th
 - `src/app.rs`: lifecycle, single-instance mutex, coordinator loop, command dispatch and orderly shutdown.
 - `src/tray.rs`: native notification icon and menu.
 - `src/windows/hooks.rs`: global wheel hook and physical left/right Windows-key state.
+- `src/windows/window_events.rs`: out-of-context top-level window lifecycle notifications.
 - `src/windows/desktops.rs`: narrow adapter over `winvd`.
 - `src/windows/inventory.rs`: conservative top-level-window eligibility and desktop occupancy.
 - `src/reconciliation/`: pure state model, planner and bounded executor.
@@ -35,6 +37,7 @@ WH_MOUSE_LL ─┐
 tray menu ───┤
 IPC request ─┼─> AppSignal channel ─> coordinator ─> winvd backend
 winvd event ─┤                              │
+window event ┤                              │
 watchdog ────┘                              ├─> structured event bus
                                                ├─> logs
                                                └─> tray state

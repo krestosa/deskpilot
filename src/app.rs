@@ -8,7 +8,9 @@ use crate::support::create_support_bundle;
 use crate::tray::{Tray, TrayCommand};
 use crate::wheel::Step;
 use crate::windows::desktops::WinvdBackend;
-use crate::windows::{hooks::HookController, inventory, startup, system};
+use crate::windows::{
+    hooks::HookController, inventory, startup, system, window_events::WindowEventController,
+};
 use crate::{APP_NAME, APP_VERSION};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -32,6 +34,7 @@ enum AppSignal {
     Tray(TrayCommand),
     Ipc(ServerRequest),
     DesktopEvent,
+    WindowEvent,
 }
 
 pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
@@ -106,6 +109,19 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
     };
     bridge(desktop_rx, signal_tx.clone(), |_| AppSignal::DesktopEvent);
 
+    let (window_tx, window_rx) = mpsc::channel();
+    bridge(window_rx, signal_tx.clone(), |_| AppSignal::WindowEvent);
+    let mut window_events = match WindowEventController::start(window_tx) {
+        Ok(controller) => Some(controller),
+        Err(error) => {
+            log(
+                LogLevel::Warn,
+                format!("window event listener unavailable: {error}"),
+            );
+            None
+        }
+    };
+
     let mut state = AppState {
         data_dir,
         config_path,
@@ -153,7 +169,7 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
                     pending_reconcile = Some(Instant::now());
                 }
             }
-            Ok(AppSignal::DesktopEvent) => {
+            Ok(AppSignal::DesktopEvent | AppSignal::WindowEvent) => {
                 let delay = state.config_read().desktops.reconcile_delay_ms;
                 pending_reconcile = Some(Instant::now() + Duration::from_millis(delay));
             }
@@ -190,6 +206,9 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
         .events
         .publish(Event::new("shutdown", "DeskPilot is shutting down"));
     drop(desktop_listener);
+    if let Some(window_events) = &mut window_events {
+        window_events.stop();
+    }
     if let Some(hook) = &mut hook {
         hook.stop();
     }
@@ -543,8 +562,12 @@ impl AppState {
             } else {
                 "invalid".to_string()
             },
-            windows_version: format!("{}.{}.{}", version.major, version.minor, version.build),
+            windows_version: format!(
+                "{}.{}.{}.{}",
+                version.major, version.minor, version.build, version.revision
+            ),
             windows_build: version.build,
+            windows_revision: version.revision,
             process_architecture: std::env::consts::ARCH.to_string(),
             integrity_level: system::integrity_level(),
             interactive_session: system::is_interactive_session(),

@@ -21,10 +21,10 @@ The third-party copyright and permission notice is included in `THIRD_PARTY_NOTI
 
 The backend is enabled only for recognized Windows 11 build families:
 
-- 24H2: build `26100`;
-- 25H2: build `26200`.
+- 24H2: build `26100` with UBR `2605` or newer;
+- 25H2: build `26200` with UBR `8117` or newer.
 
-The pinned `winvd` release documents a minimum serviced 24H2 baseline of `26100.2605` and reports testing on `26200.8117`. Windows' basic version structure exposes the build family but not the cumulative update revision in the field used by DeskPilot; `doctor` reports the detected build and the exact application/backend versions so an unsupported servicing regression can be diagnosed.
+The pinned `winvd` release documents a minimum serviced 24H2 baseline of `26100.2605` and reports testing on `26200.8117`. DeskPilot reads the `UBR` servicing revision from `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion` and reports both build and revision in `doctor`. If the revision cannot be read, it is treated as `0` and the backend remains disabled.
 
 On any unrecognized build the backend reports incompatible and DeskPilot does not create, remove, switch or reconcile desktops. Tray error state, configuration, logs, `doctor`, support bundles and mock self-test remain available.
 
