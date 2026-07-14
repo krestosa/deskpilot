@@ -1,18 +1,21 @@
 use std::ffi::c_void;
 use std::mem::{size_of, zeroed};
 use std::path::Path;
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_SUCCESS, HANDLE, HLOCAL};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, GetLastError, LocalFree, ERROR_SUCCESS, HANDLE, HLOCAL,
+};
 use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows_sys::Win32::Security::{
-    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, OpenProcessToken,
-    TokenIntegrityLevel, TokenUser, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER,
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenIntegrityLevel,
+    TokenUser, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER,
 };
-use windows_sys::Win32::System::Memory::LocalFree;
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, REG_DWORD,
 };
 use windows_sys::Win32::System::SystemInformation::{GetVersionExW, OSVERSIONINFOW};
-use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId};
+use windows_sys::Win32::System::Threading::{
+    GetCurrentProcess, GetCurrentProcessId, OpenProcessToken,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, GetShellWindow};
 
 use super::util::wide;
