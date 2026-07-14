@@ -1,0 +1,64 @@
+name: Regenerate Rust 1.85 lockfile
+
+on:
+  push:
+    branches:
+      - fix/rust-1.85-lockfile
+    paths:
+      - '.github/workflows/regenerate-msrv-lock.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deskpilot-regenerate-msrv-lock
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/rust-1.85-lockfile
+          fetch-depth: 0
+
+      - name: Install declared Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal --component rustfmt --component clippy --target x86_64-pc-windows-msvc
+          rustc --version --verbose
+          cargo --version
+
+      - name: Regenerate and validate lockfile with Rust 1.85
+        shell: pwsh
+        run: |
+          cargo generate-lockfile
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+          cargo build --release --locked --target x86_64-pc-windows-msvc
+          .\scripts\verify-license.ps1
+          .\scripts\build-portable.ps1 -SkipBuild
+
+      - name: Verify compatible time dependency
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --locked --format-version 1 | ConvertFrom-Json
+          $time = $metadata.packages | Where-Object name -eq 'time' | Select-Object -First 1
+          if (-not $time -or $time.version -ne '0.3.45') {
+            throw "Expected time 0.3.45, resolved $($time.version)"
+          }
+
+      - name: Publish regenerated lockfile
+        shell: pwsh
+        run: |
+          Remove-Item .github\workflows\regenerate-msrv-lock.yml -Force
+          git add Cargo.lock .github\workflows\regenerate-msrv-lock.yml
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Regenerate lockfile with Rust 1.85 compatible dependencies'
+          git push origin HEAD:fix/rust-1.85-lockfile
