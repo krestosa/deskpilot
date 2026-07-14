@@ -1,0 +1,59 @@
+name: Expand DeskPilot source
+
+on:
+  push:
+    branches:
+      - feature/portable-dynamic-desktop-manager
+    paths:
+      - '.deskpilot-bootstrap/**'
+      - '.github/workflows/bootstrap.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deskpilot-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  expand:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/portable-dynamic-desktop-manager
+          fetch-depth: 0
+
+      - name: Reassemble and verify source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .deskpilot-bootstrap/part-* > deskpilot-source.b64
+          base64 --decode deskpilot-source.b64 > deskpilot-source.tar.gz
+          echo 'c3798e433b255ce39234a02b229c5bda904ae2fb765f0a316d51c90907a1d214  deskpilot-source.tar.gz' | sha256sum --check --strict
+
+      - name: Expand final tree and remove transport files
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --extract --gzip --file deskpilot-source.tar.gz
+          rm -rf .deskpilot-bootstrap
+          rm -f deskpilot-source.b64 deskpilot-source.tar.gz
+          rm -f .github/workflows/bootstrap.yml
+          test -f Cargo.toml
+          test -f src/main.rs
+          test -f LICENSE.md
+          test -f .github/workflows/ci.yml
+          test ! -e .deskpilot-bootstrap
+
+      - name: Commit expanded source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add --all
+          git diff --cached --check
+          git commit -m 'Implement portable dynamic desktop manager'
+          git push origin HEAD:feature/portable-dynamic-desktop-manager
