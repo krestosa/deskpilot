@@ -1,6 +1,11 @@
 name: Finalize active empty desktop fix
 
 on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches: [main]
+    paths:
+      - '.github/workflows/finalize-active-empty-fix.yml'
   push:
     branches:
       - fix/preserve-active-empty-and-wrap
@@ -16,6 +21,7 @@ concurrency:
 
 jobs:
   finalize:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
