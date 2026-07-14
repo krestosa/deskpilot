@@ -66,4 +66,4 @@ jobs:
           git diff --cached --check
           git commit -m "Implement portable dynamic desktop manager"
           git push origin HEAD:feature/portable-dynamic-desktop-manager
-# export exact transport parts for deterministic recovery
+# checksum-verified recovery at source archive SHA c3798e433b255ce39234a02b229c5bda904ae2fb765f0a316d51c90907a1d214
