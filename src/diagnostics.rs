@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::logging::timestamp_utc;
-use crate::{APP_VERSION, APP_NAME};
+use crate::{APP_NAME, APP_VERSION};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BackendDiagnostic {
@@ -68,7 +68,11 @@ impl DoctorReport {
             },
             desktop_count: None,
             current_desktop: None,
-            occupancy: OccupancyDiagnostic { occupied: 0, empty: 0, unknown: 0 },
+            occupancy: OccupancyDiagnostic {
+                occupied: 0,
+                empty: 0,
+                unknown: 0,
+            },
             hook_state: "not running".to_string(),
             ipc_state: "not running".to_string(),
             dynamic_reconciliation: "not running".to_string(),

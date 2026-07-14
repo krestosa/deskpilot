@@ -13,7 +13,7 @@ use windows_sys::Win32::Foundation::{
     INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
-use windows_sys::Win32::Security::{SECURITY_ATTRIBUTES, SDDL_REVISION_1};
+use windows_sys::Win32::Security::{SDDL_REVISION_1, SECURITY_ATTRIBUTES};
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, GENERIC_READ,
     GENERIC_WRITE, OPEN_EXISTING,
@@ -50,7 +50,12 @@ pub struct IpcResponse {
 impl IpcResponse {
     pub fn success(data: impl Serialize) -> Self {
         match serde_json::to_value(data) {
-            Ok(value) => Self { ok: true, code: 0, data: Some(value), error: None },
+            Ok(value) => Self {
+                ok: true,
+                code: 0,
+                data: Some(value),
+                error: None,
+            },
             Err(error) => Self::failure(70, error.to_string()),
         }
     }
@@ -60,7 +65,12 @@ impl IpcResponse {
     }
 
     pub fn failure(code: i32, error: impl Into<String>) -> Self {
-        Self { ok: false, code, data: None, error: Some(error.into()) }
+        Self {
+            ok: false,
+            code,
+            data: None,
+            error: Some(error.into()),
+        }
     }
 }
 
@@ -86,20 +96,33 @@ impl IpcServer {
             .name("deskpilot-ipc".to_string())
             .spawn(move || server_loop(&pipe_thread, &dispatch, &events, &stop_thread))
             .map_err(|error| error.to_string())?;
-        Ok(Self { stop, thread: Some(thread), pipe_name })
+        Ok(Self {
+            stop,
+            thread: Some(thread),
+            pipe_name,
+        })
     }
 
-    pub fn pipe_name(&self) -> &str { &self.pipe_name }
+    pub fn pipe_name(&self) -> &str {
+        &self.pipe_name
+    }
 
     pub fn stop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        let _ = send_request(&IpcRequest { command: "__wake".to_string(), json: true });
-        if let Some(thread) = self.thread.take() { let _ = thread.join(); }
+        let _ = send_request(&IpcRequest {
+            command: "__wake".to_string(),
+            json: true,
+        });
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
 impl Drop for IpcServer {
-    fn drop(&mut self) { self.stop(); }
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 pub fn send_request(request: &IpcRequest) -> Result<IpcResponse, String> {
@@ -147,15 +170,23 @@ pub fn stream_events() -> Result<(), String> {
             FILE_ATTRIBUTE_NORMAL,
             0,
         );
-        if handle == INVALID_HANDLE_VALUE { return Err("opening DeskPilot IPC failed".to_string()); }
-        let request = serde_json::to_vec(&IpcRequest { command: "events".to_string(), json: true })
-            .map_err(|error| error.to_string())?;
+        if handle == INVALID_HANDLE_VALUE {
+            return Err("opening DeskPilot IPC failed".to_string());
+        }
+        let request = serde_json::to_vec(&IpcRequest {
+            command: "events".to_string(),
+            json: true,
+        })
+        .map_err(|error| error.to_string())?;
         write_message(handle, &request)?;
         loop {
             match read_message(handle) {
                 Ok(message) => println!("{}", String::from_utf8_lossy(&message)),
                 Err(error) if error.contains("broken pipe") => break,
-                Err(error) => { CloseHandle(handle); return Err(error); }
+                Err(error) => {
+                    CloseHandle(handle);
+                    return Err(error);
+                }
             }
         }
         CloseHandle(handle);
@@ -174,37 +205,60 @@ fn server_loop(
         let connected = unsafe { ConnectNamedPipe(pipe, std::ptr::null_mut()) };
         if connected == 0 && unsafe { GetLastError() } != ERROR_PIPE_CONNECTED {
             unsafe { CloseHandle(pipe) };
-            if stop.load(Ordering::Acquire) { break; }
+            if stop.load(Ordering::Acquire) {
+                break;
+            }
             continue;
         }
         if stop.load(Ordering::Acquire) {
-            unsafe { DisconnectNamedPipe(pipe); CloseHandle(pipe); }
+            unsafe {
+                DisconnectNamedPipe(pipe);
+                CloseHandle(pipe);
+            }
             break;
         }
         let dispatch = dispatch.clone();
         let events = events.clone();
         thread::spawn(move || {
             let _ = handle_client(pipe, dispatch, events);
-            unsafe { FlushFileBuffers(pipe); DisconnectNamedPipe(pipe); CloseHandle(pipe); }
+            unsafe {
+                FlushFileBuffers(pipe);
+                DisconnectNamedPipe(pipe);
+                CloseHandle(pipe);
+            }
         });
     }
     Ok(())
 }
 
-fn handle_client(pipe: HANDLE, dispatch: Sender<ServerRequest>, events: Arc<EventBus>) -> Result<(), String> {
+fn handle_client(
+    pipe: HANDLE,
+    dispatch: Sender<ServerRequest>,
+    events: Arc<EventBus>,
+) -> Result<(), String> {
     let payload = unsafe { read_message(pipe)? };
-    let request: IpcRequest = serde_json::from_slice(&payload).map_err(|error| error.to_string())?;
+    let request: IpcRequest =
+        serde_json::from_slice(&payload).map_err(|error| error.to_string())?;
     if request.command == "events" {
         let receiver = events.subscribe();
         for event in receiver {
             let payload = serde_json::to_vec(&event).map_err(|error| error.to_string())?;
-            if unsafe { write_message(pipe, &payload) }.is_err() { break; }
+            if unsafe { write_message(pipe, &payload) }.is_err() {
+                break;
+            }
         }
         return Ok(());
     }
     let (response_tx, response_rx) = mpsc::channel();
-    dispatch.send(ServerRequest { request, response: response_tx }).map_err(|error| error.to_string())?;
-    let response = response_rx.recv_timeout(Duration::from_secs(10)).map_err(|error| error.to_string())?;
+    dispatch
+        .send(ServerRequest {
+            request,
+            response: response_tx,
+        })
+        .map_err(|error| error.to_string())?;
+    let response = response_rx
+        .recv_timeout(Duration::from_secs(10))
+        .map_err(|error| error.to_string())?;
     let payload = serde_json::to_vec(&response).map_err(|error| error.to_string())?;
     unsafe { write_message(pipe, &payload) }
 }
@@ -221,7 +275,10 @@ fn create_server_pipe(name: &str) -> Result<HANDLE, String> {
             std::ptr::null_mut(),
         ) == 0
         {
-            return Err(format!("creating IPC security descriptor failed: {}", GetLastError()));
+            return Err(format!(
+                "creating IPC security descriptor failed: {}",
+                GetLastError()
+            ));
         }
         let mut attributes = SECURITY_ATTRIBUTES {
             nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -253,7 +310,9 @@ fn pipe_name() -> Result<String, String> {
 }
 
 unsafe fn write_message(handle: HANDLE, data: &[u8]) -> Result<(), String> {
-    if data.len() > MAX_MESSAGE { return Err("IPC message exceeds 64 KiB".to_string()); }
+    if data.len() > MAX_MESSAGE {
+        return Err("IPC message exceeds 64 KiB".to_string());
+    }
     let mut written = 0;
     if unsafe {
         WriteFile(
@@ -263,7 +322,8 @@ unsafe fn write_message(handle: HANDLE, data: &[u8]) -> Result<(), String> {
             &mut written,
             std::ptr::null_mut(),
         )
-    } == 0 || written != data.len() as u32
+    } == 0
+        || written != data.len() as u32
     {
         return Err(format!("IPC write failed: {}", unsafe { GetLastError() }));
     }
@@ -284,7 +344,9 @@ unsafe fn read_message(handle: HANDLE) -> Result<Vec<u8>, String> {
     } == 0
     {
         let error = unsafe { GetLastError() };
-        if error == ERROR_BROKEN_PIPE { return Err("IPC broken pipe".to_string()); }
+        if error == ERROR_BROKEN_PIPE {
+            return Err("IPC broken pipe".to_string());
+        }
         return Err(format!("IPC read failed: {error}"));
     }
     buffer.truncate(read as usize);

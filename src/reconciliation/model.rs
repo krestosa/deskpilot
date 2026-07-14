@@ -22,8 +22,13 @@ pub struct DesktopState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mutation {
     CreateTrailing,
-    Remove { desktop: DesktopId, fallback: DesktopId },
-    Switch { desktop: DesktopId },
+    Remove {
+        desktop: DesktopId,
+        fallback: DesktopId,
+    },
+    Switch {
+        desktop: DesktopId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -34,16 +39,25 @@ pub struct Plan {
 
 pub fn plan(desktops: &[DesktopState]) -> Plan {
     if desktops.is_empty() {
-        return Plan { mutations: vec![Mutation::CreateTrailing], stable: false };
+        return Plan {
+            mutations: vec![Mutation::CreateTrailing],
+            stable: false,
+        };
     }
 
     let last = desktops.len() - 1;
     if desktops[last].occupancy == Occupancy::Occupied {
-        return Plan { mutations: vec![Mutation::CreateTrailing], stable: false };
+        return Plan {
+            mutations: vec![Mutation::CreateTrailing],
+            stable: false,
+        };
     }
 
     if desktops[last].occupancy == Occupancy::Unknown {
-        return Plan { mutations: Vec::new(), stable: false };
+        return Plan {
+            mutations: Vec::new(),
+            stable: false,
+        };
     }
 
     let mut mutations = Vec::new();
@@ -60,7 +74,10 @@ pub fn plan(desktops: &[DesktopState]) -> Plan {
                 fallback,
             });
         }
-        return Plan { mutations, stable: false };
+        return Plan {
+            mutations,
+            stable: false,
+        };
     }
 
     for (index, desktop) in desktops.iter().enumerate().take(last) {
@@ -68,18 +85,28 @@ pub fn plan(desktops: &[DesktopState]) -> Plan {
             continue;
         }
         let fallback_index = nearest_safe_fallback(desktops, index);
-        let Some(fallback_index) = fallback_index else { continue };
+        let Some(fallback_index) = fallback_index else {
+            continue;
+        };
         if desktop.current {
-            mutations.push(Mutation::Switch { desktop: desktops[fallback_index].id.clone() });
+            mutations.push(Mutation::Switch {
+                desktop: desktops[fallback_index].id.clone(),
+            });
         }
         mutations.push(Mutation::Remove {
             desktop: desktop.id.clone(),
             fallback: desktops[fallback_index].id.clone(),
         });
-        return Plan { mutations, stable: false };
+        return Plan {
+            mutations,
+            stable: false,
+        };
     }
 
-    Plan { mutations, stable: true }
+    Plan {
+        mutations,
+        stable: true,
+    }
 }
 
 fn nearest_safe_fallback(desktops: &[DesktopState], removing: usize) -> Option<usize> {
@@ -90,7 +117,11 @@ fn nearest_safe_fallback(desktops: &[DesktopState], removing: usize) -> Option<u
         .find(|&index| desktops[index].occupancy != Occupancy::Unknown);
     match (left, right) {
         (Some(left), Some(right)) => {
-            if removing - left <= right - removing { Some(left) } else { Some(right) }
+            if removing - left <= right - removing {
+                Some(left)
+            } else {
+                Some(right)
+            }
         }
         (Some(left), None) => Some(left),
         (None, Some(right)) => Some(right),

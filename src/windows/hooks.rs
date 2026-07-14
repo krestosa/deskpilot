@@ -47,18 +47,29 @@ impl HookController {
             suspended: AtomicBool::new(false),
             thread_id: AtomicU32::new(0),
         });
-        CONTEXT.set(context.clone()).map_err(|_| "hook context already initialized".to_string())?;
+        CONTEXT
+            .set(context.clone())
+            .map_err(|_| "hook context already initialized".to_string())?;
         let context_for_thread = context.clone();
         let thread = thread::Builder::new()
             .name("deskpilot-input-hook".to_string())
             .spawn(move || run_hook_loop(&context_for_thread))
             .map_err(|error| error.to_string())?;
-        Ok(Self { context, thread: Some(thread) })
+        Ok(Self {
+            context,
+            thread: Some(thread),
+        })
     }
 
-    pub fn set_enabled(&self, enabled: bool) { self.context.enabled.store(enabled, Ordering::Release); }
-    pub fn set_backend_ready(&self, ready: bool) { self.context.backend_ready.store(ready, Ordering::Release); }
-    pub fn set_suspended(&self, suspended: bool) { self.context.suspended.store(suspended, Ordering::Release); }
+    pub fn set_enabled(&self, enabled: bool) {
+        self.context.enabled.store(enabled, Ordering::Release);
+    }
+    pub fn set_backend_ready(&self, ready: bool) {
+        self.context.backend_ready.store(ready, Ordering::Release);
+    }
+    pub fn set_suspended(&self, suspended: bool) {
+        self.context.suspended.store(suspended, Ordering::Release);
+    }
 
     pub fn stop(&mut self) {
         let thread_id = self.context.thread_id.load(Ordering::Acquire);
@@ -72,12 +83,16 @@ impl HookController {
 }
 
 impl Drop for HookController {
-    fn drop(&mut self) { self.stop(); }
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 fn run_hook_loop(context: &HookContext) -> Result<(), String> {
     unsafe {
-        context.thread_id.store(GetCurrentThreadId(), Ordering::Release);
+        context
+            .thread_id
+            .store(GetCurrentThreadId(), Ordering::Release);
         let module = GetModuleHandleW(std::ptr::null());
         let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), module, 0);
         if hook == 0 {
@@ -160,7 +175,11 @@ fn suppress_start_menu() {
             },
         };
         let inputs = [down, up];
-        let _ = SendInput(inputs.len() as u32, inputs.as_ptr(), size_of::<INPUT>() as i32);
+        let _ = SendInput(
+            inputs.len() as u32,
+            inputs.as_ptr(),
+            size_of::<INPUT>() as i32,
+        );
     }
 }
 

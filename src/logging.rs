@@ -40,9 +40,13 @@ impl Logger {
         })
     }
 
-    pub fn global() -> Option<&'static Self> { LOGGER.get() }
+    pub fn global() -> Option<&'static Self> {
+        LOGGER.get()
+    }
 
-    pub fn path(&self) -> &Path { &self.path }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 
     pub fn recent_errors(&self) -> Vec<String> {
         self.recent_errors
@@ -55,10 +59,17 @@ impl Logger {
             return;
         }
         let sanitized = message.replace(['\r', '\n'], " ");
-        let line = format!("{} {:<5} {}\n", timestamp_utc(), level_name(level), sanitized);
+        let line = format!(
+            "{} {:<5} {}\n",
+            timestamp_utc(),
+            level_name(level),
+            sanitized
+        );
         if matches!(level, LogLevel::Error | LogLevel::Warn) {
             if let Ok(mut errors) = self.recent_errors.lock() {
-                if errors.len() == 32 { errors.pop_front(); }
+                if errors.len() == 32 {
+                    errors.pop_front();
+                }
                 errors.push_back(line.trim().to_string());
             }
         }

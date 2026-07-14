@@ -101,11 +101,15 @@ impl Default for WheelConfig {
 }
 
 impl Default for WheelDirection {
-    fn default() -> Self { Self::Normal }
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 impl Default for NavigationMode {
-    fn default() -> Self { Self::Clamp }
+    fn default() -> Self {
+        Self::Clamp
+    }
 }
 
 impl Default for DesktopConfig {
@@ -142,9 +146,15 @@ impl Default for LoggingConfig {
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("configuration I/O error at {path}: {source}")]
-    Io { path: PathBuf, source: std::io::Error },
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("invalid TOML in {path}: {source}")]
-    Parse { path: PathBuf, source: toml::de::Error },
+    Parse {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
     #[error("invalid configuration key or value: {0}")]
     Validation(String),
 }
@@ -157,8 +167,18 @@ impl Config {
                 self.schema_version
             )));
         }
-        validate_range("wheel.threshold", i64::from(self.wheel.threshold), 40, 1_200)?;
-        validate_range("wheel.cooldown_ms", to_i64(self.wheel.cooldown_ms)?, 0, 5_000)?;
+        validate_range(
+            "wheel.threshold",
+            i64::from(self.wheel.threshold),
+            40,
+            1_200,
+        )?;
+        validate_range(
+            "wheel.cooldown_ms",
+            to_i64(self.wheel.cooldown_ms)?,
+            0,
+            5_000,
+        )?;
         validate_range(
             "desktops.reconcile_delay_ms",
             to_i64(self.desktops.reconcile_delay_ms)?,
@@ -270,9 +290,9 @@ fn validate_range(key: &str, value: i64, minimum: i64, maximum: i64) -> Result<(
 }
 
 fn to_i64(value: u64) -> Result<i64, ConfigError> {
-    i64::try_from(value).map_err(|_| ConfigError::Validation("numeric value is too large".to_string()))
+    i64::try_from(value)
+        .map_err(|_| ConfigError::Validation("numeric value is too large".to_string()))
 }
-
 
 #[cfg(windows)]
 fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {

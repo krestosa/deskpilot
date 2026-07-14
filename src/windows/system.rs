@@ -26,9 +26,17 @@ pub fn windows_version() -> WindowsVersion {
         let mut info: OSVERSIONINFOW = zeroed();
         info.dwOSVersionInfoSize = size_of::<OSVERSIONINFOW>() as u32;
         if GetVersionExW(&mut info) != 0 {
-            WindowsVersion { major: info.dwMajorVersion, minor: info.dwMinorVersion, build: info.dwBuildNumber }
+            WindowsVersion {
+                major: info.dwMajorVersion,
+                minor: info.dwMinorVersion,
+                build: info.dwBuildNumber,
+            }
         } else {
-            WindowsVersion { major: 0, minor: 0, build: 0 }
+            WindowsVersion {
+                major: 0,
+                minor: 0,
+                build: 0,
+            }
         }
     }
 }
@@ -57,9 +65,17 @@ pub fn current_user_sid() -> Result<String, String> {
 
 pub fn integrity_level() -> String {
     unsafe {
-        let Ok(token) = open_process_token() else { return "unknown".to_string() };
+        let Ok(token) = open_process_token() else {
+            return "unknown".to_string();
+        };
         let mut size = 0;
-        let _ = GetTokenInformation(token, TokenIntegrityLevel, std::ptr::null_mut(), 0, &mut size);
+        let _ = GetTokenInformation(
+            token,
+            TokenIntegrityLevel,
+            std::ptr::null_mut(),
+            0,
+            &mut size,
+        );
         if size == 0 {
             CloseHandle(token);
             return "unknown".to_string();
@@ -73,10 +89,14 @@ pub fn integrity_level() -> String {
             &mut size,
         );
         CloseHandle(token);
-        if ok == 0 { return "unknown".to_string(); }
+        if ok == 0 {
+            return "unknown".to_string();
+        }
         let label = &*(buffer.as_ptr().cast::<TOKEN_MANDATORY_LABEL>());
         let count = *GetSidSubAuthorityCount(label.Label.Sid) as u32;
-        if count == 0 { return "unknown".to_string(); }
+        if count == 0 {
+            return "unknown".to_string();
+        }
         let rid = *GetSidSubAuthority(label.Label.Sid, count - 1);
         match rid {
             0x0000..=0x0FFF => "untrusted",
@@ -100,7 +120,9 @@ pub fn portable_write_test(data_dir: &Path) -> bool {
 unsafe fn open_process_token() -> Result<HANDLE, String> {
     let mut token = 0;
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
-        return Err(format!("OpenProcessToken failed: {}", unsafe { GetLastError() }));
+        return Err(format!("OpenProcessToken failed: {}", unsafe {
+            GetLastError()
+        }));
     }
     Ok(token)
 }
@@ -122,16 +144,24 @@ unsafe fn token_user_sid(token: HANDLE) -> Result<String, String> {
         )
     } == 0
     {
-        return Err(format!("GetTokenInformation(TokenUser) failed: {}", unsafe { GetLastError() }));
+        return Err(format!(
+            "GetTokenInformation(TokenUser) failed: {}",
+            unsafe { GetLastError() }
+        ));
     }
     let token_user = unsafe { &*(buffer.as_ptr().cast::<TOKEN_USER>()) };
     let mut sid_string = std::ptr::null_mut();
     if unsafe { ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string) } == 0 {
-        return Err(format!("ConvertSidToStringSidW failed: {}", unsafe { GetLastError() }));
+        return Err(format!("ConvertSidToStringSidW failed: {}", unsafe {
+            GetLastError()
+        }));
     }
     let mut length = 0;
-    while unsafe { *sid_string.add(length) } != 0 { length += 1; }
-    let result = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(sid_string, length) });
+    while unsafe { *sid_string.add(length) } != 0 {
+        length += 1;
+    }
+    let result =
+        String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(sid_string, length) });
     unsafe { LocalFree(sid_string as HLOCAL) };
     Ok(result)
 }

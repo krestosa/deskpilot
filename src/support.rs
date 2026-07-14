@@ -22,10 +22,25 @@ pub fn create_support_bundle(
     let file = File::create(&output).map_err(|error| error.to_string())?;
     let mut zip = zip::ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    let mut manifest = Manifest { created_at: timestamp_utc(), files: BTreeMap::new() };
+    let mut manifest = Manifest {
+        created_at: timestamp_utc(),
+        files: BTreeMap::new(),
+    };
 
-    add_bytes(&mut zip, options, "doctor.json", doctor_json.as_bytes(), &mut manifest)?;
-    add_bytes(&mut zip, options, "deskpilot.redacted.toml", redacted_config.as_bytes(), &mut manifest)?;
+    add_bytes(
+        &mut zip,
+        options,
+        "doctor.json",
+        doctor_json.as_bytes(),
+        &mut manifest,
+    )?;
+    add_bytes(
+        &mut zip,
+        options,
+        "deskpilot.redacted.toml",
+        redacted_config.as_bytes(),
+        &mut manifest,
+    )?;
     add_bytes(
         &mut zip,
         options,
@@ -38,21 +53,38 @@ pub fn create_support_bundle(
     if let Ok(entries) = fs::read_dir(&logs_dir) {
         for entry in entries.flatten().take(10) {
             let path = entry.path();
-            if path.is_symlink() || !path.is_file() { continue; }
+            if path.is_symlink() || !path.is_file() {
+                continue;
+            }
             let mut data = Vec::new();
-            if File::open(&path).and_then(|mut file| file.take(2 * 1024 * 1024).read_to_end(&mut data)).is_ok() {
+            if File::open(&path)
+                .and_then(|mut file| file.take(2 * 1024 * 1024).read_to_end(&mut data))
+                .is_ok()
+            {
                 if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-                    add_bytes(&mut zip, options, &format!("logs/{name}"), &data, &mut manifest)?;
+                    add_bytes(
+                        &mut zip,
+                        options,
+                        &format!("logs/{name}"),
+                        &data,
+                        &mut manifest,
+                    )?;
                 }
             }
         }
     }
 
     let manifest_json = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
-    add_bytes(&mut zip, options, "manifest.json", &manifest_json, &mut Manifest {
-        created_at: String::new(),
-        files: BTreeMap::new(),
-    })?;
+    add_bytes(
+        &mut zip,
+        options,
+        "manifest.json",
+        &manifest_json,
+        &mut Manifest {
+            created_at: String::new(),
+            files: BTreeMap::new(),
+        },
+    )?;
     zip.finish().map_err(|error| error.to_string())?;
     Ok(output)
 }
@@ -67,7 +99,8 @@ fn add_bytes(
     if name.contains("..") || name.starts_with(['/', '\\']) {
         return Err("unsafe support bundle path".to_string());
     }
-    zip.start_file(name.replace('\\', "/"), options).map_err(|error| error.to_string())?;
+    zip.start_file(name.replace('\\', "/"), options)
+        .map_err(|error| error.to_string())?;
     zip.write_all(data).map_err(|error| error.to_string())?;
     manifest.files.insert(name.to_string(), data.len() as u64);
     Ok(())

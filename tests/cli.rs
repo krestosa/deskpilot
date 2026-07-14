@@ -53,10 +53,22 @@ fn global_options_work_before_or_after_subcommand() {
 
 #[test]
 fn command_hierarchy_is_stable() {
-    assert_eq!(parse(&["DeskPilot.exe", "desktops", "list"]).command, Command::DesktopsList);
-    assert_eq!(parse(&["DeskPilot.exe", "config", "path"]).command, Command::ConfigPath);
-    assert_eq!(parse(&["DeskPilot.exe", "logs", "tail"]).command, Command::LogsTail);
-    assert_eq!(parse(&["DeskPilot.exe", "startup", "enable"]).command, Command::StartupEnable);
+    assert_eq!(
+        parse(&["DeskPilot.exe", "desktops", "list"]).command,
+        Command::DesktopsList
+    );
+    assert_eq!(
+        parse(&["DeskPilot.exe", "config", "path"]).command,
+        Command::ConfigPath
+    );
+    assert_eq!(
+        parse(&["DeskPilot.exe", "logs", "tail"]).command,
+        Command::LogsTail
+    );
+    assert_eq!(
+        parse(&["DeskPilot.exe", "startup", "enable"]).command,
+        Command::StartupEnable
+    );
 }
 
 #[test]
@@ -71,14 +83,14 @@ fn mock_self_test_is_parsed() {
 
 #[test]
 fn missing_data_directory_value_is_explicit() {
-    let error = Invocation::parse(["DeskPilot.exe", "--data-dir"])
-        .expect_err("missing value must fail");
+    let error =
+        Invocation::parse(["DeskPilot.exe", "--data-dir"]).expect_err("missing value must fail");
     assert_eq!(error, CliError::MissingValue("--data-dir".to_string()));
 }
 
 #[test]
 fn unknown_command_is_rejected() {
-    let error = Invocation::parse(["DeskPilot.exe", "explode"])
-        .expect_err("unknown command must fail");
+    let error =
+        Invocation::parse(["DeskPilot.exe", "explode"]).expect_err("unknown command must fail");
     assert_eq!(error, CliError::Unknown("explode".to_string()));
 }

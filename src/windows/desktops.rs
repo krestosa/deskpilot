@@ -34,8 +34,7 @@ impl WinvdBackend {
     pub fn detect() -> Self {
         let version = windows_version();
         let compatible = version.major == 10
-            && ((version.build == 26_100 && version.build >= 26_100)
-                || version.build == 26_200);
+            && ((version.build == 26_100 && version.build >= 26_100) || version.build == 26_200);
         let compatibility_reason = if compatible {
             format!("recognized Windows 11 build family {}", version.build)
         } else {
@@ -44,12 +43,22 @@ impl WinvdBackend {
                 version.major, version.minor, version.build
             )
         };
-        Self { version, compatible, compatibility_reason }
+        Self {
+            version,
+            compatible,
+            compatibility_reason,
+        }
     }
 
-    pub fn version(&self) -> WindowsVersion { self.version }
-    pub fn compatible(&self) -> bool { self.compatible }
-    pub fn compatibility_reason(&self) -> &str { &self.compatibility_reason }
+    pub fn version(&self) -> WindowsVersion {
+        self.version
+    }
+    pub fn compatible(&self) -> bool {
+        self.compatible
+    }
+    pub fn compatibility_reason(&self) -> &str {
+        &self.compatibility_reason
+    }
 
     pub fn capabilities(&self) -> BackendCapabilities {
         BackendCapabilities {
@@ -71,7 +80,10 @@ impl WinvdBackend {
             .map(|(index, desktop)| {
                 desktop
                     .get_id()
-                    .map(|guid| DesktopInfo { id: DesktopId(format!("{guid:?}")), index })
+                    .map(|guid| DesktopInfo {
+                        id: DesktopId(format!("{guid:?}")),
+                        index,
+                    })
                     .map_err(format_error)
             })
             .collect()
@@ -82,7 +94,10 @@ impl WinvdBackend {
         let desktop = winvd::get_current_desktop().map_err(format_error)?;
         let index = desktop.get_index().map_err(format_error)? as usize;
         let id = desktop.get_id().map_err(format_error)?;
-        Ok(DesktopInfo { id: DesktopId(format!("{id:?}")), index })
+        Ok(DesktopInfo {
+            id: DesktopId(format!("{id:?}")),
+            index,
+        })
     }
 
     pub fn switch_to_id(&self, desktop: &DesktopId) -> Result<(), String> {
@@ -96,7 +111,10 @@ impl WinvdBackend {
         let target = target_index(current.index, desktops.len(), step, mode)
             .ok_or_else(|| "navigation reached a clamped edge".to_string())?;
         winvd::switch_desktop(target as u32).map_err(format_error)?;
-        desktops.get(target).cloned().ok_or_else(|| "target desktop disappeared".to_string())
+        desktops
+            .get(target)
+            .cloned()
+            .ok_or_else(|| "target desktop disappeared".to_string())
     }
 
     pub fn create(&self) -> Result<DesktopInfo, String> {
@@ -104,7 +122,10 @@ impl WinvdBackend {
         let desktop = winvd::create_desktop().map_err(format_error)?;
         let index = desktop.get_index().map_err(format_error)? as usize;
         let id = desktop.get_id().map_err(format_error)?;
-        Ok(DesktopInfo { id: DesktopId(format!("{id:?}")), index })
+        Ok(DesktopInfo {
+            id: DesktopId(format!("{id:?}")),
+            index,
+        })
     }
 
     pub fn remove(&self, desktop: &DesktopId, fallback: &DesktopId) -> Result<(), String> {
@@ -134,7 +155,11 @@ impl WinvdBackend {
     }
 
     fn require_compatible(&self) -> Result<(), String> {
-        if self.compatible { Ok(()) } else { Err(self.compatibility_reason.clone()) }
+        if self.compatible {
+            Ok(())
+        } else {
+            Err(self.compatibility_reason.clone())
+        }
     }
 }
 
@@ -142,4 +167,6 @@ fn to_win_hwnd(hwnd: HWND) -> WinHwnd {
     WinHwnd(hwnd as *mut c_void)
 }
 
-fn format_error(error: impl std::fmt::Debug) -> String { format!("{error:?}") }
+fn format_error(error: impl std::fmt::Debug) -> String {
+    format!("{error:?}")
+}

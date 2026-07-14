@@ -169,11 +169,7 @@ impl ReconcileBackend for FakeBackend {
         Ok(())
     }
 
-    fn remove_desktop(
-        &mut self,
-        desktop: &DesktopId,
-        _fallback: &DesktopId,
-    ) -> Result<(), String> {
+    fn remove_desktop(&mut self, desktop: &DesktopId, _fallback: &DesktopId) -> Result<(), String> {
         if self.fail_remove {
             return Err("removal failed".to_string());
         }
@@ -189,7 +185,10 @@ fn occupying_spare_creates_exactly_one_new_spare() {
     let report = apply_plan(&mut backend, 8).expect("reconciliation should complete");
     assert!(report.stable);
     assert_eq!(backend.desktops.len(), 3);
-    assert_eq!(backend.desktops.last().map(|state| state.occupancy), Some(Occupancy::Empty));
+    assert_eq!(
+        backend.desktops.last().map(|state| state.occupancy),
+        Some(Occupancy::Empty)
+    );
     assert_eq!(backend.operations, vec!["create"]);
 }
 
@@ -213,11 +212,7 @@ fn failed_creation_is_bounded() {
 
 #[test]
 fn failed_removal_does_not_lose_state() {
-    let mut backend = FakeBackend::from(&[
-        Occupancy::Occupied,
-        Occupancy::Empty,
-        Occupancy::Empty,
-    ]);
+    let mut backend = FakeBackend::from(&[Occupancy::Occupied, Occupancy::Empty, Occupancy::Empty]);
     backend.fail_remove = true;
     let original = backend.desktops.clone();
     let error = apply_plan(&mut backend, 8).expect_err("removal must fail");

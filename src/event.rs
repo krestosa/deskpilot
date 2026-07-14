@@ -13,7 +13,11 @@ pub struct Event {
 
 impl Event {
     pub fn new(kind: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { timestamp: timestamp_utc(), kind: kind.into(), message: message.into() }
+        Self {
+            timestamp: timestamp_utc(),
+            kind: kind.into(),
+            message: message.into(),
+        }
     }
 }
 

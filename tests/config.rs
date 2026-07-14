@@ -27,8 +27,7 @@ fn invalid_range_names_the_key() {
 fn unknown_keys_are_rejected() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("deskpilot.toml");
-    fs::write(&path, "schema_version = 1\nenabled = true\nunknown = 1\n")
-        .expect("write fixture");
+    fs::write(&path, "schema_version = 1\nenabled = true\nunknown = 1\n").expect("write fixture");
     let error = Config::load(&path).expect_err("unknown key must be rejected");
     assert!(matches!(error, ConfigError::Parse { .. }));
 }

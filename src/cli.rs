@@ -60,7 +60,9 @@ impl Invocation {
         S: Into<String>,
     {
         let mut values: Vec<String> = args.into_iter().map(Into::into).collect();
-        if !values.is_empty() { values.remove(0); }
+        if !values.is_empty() {
+            values.remove(0);
+        }
         let mut data_dir = None;
         let mut json = false;
         let mut filtered = Vec::new();
@@ -69,7 +71,9 @@ impl Invocation {
             match values[index].as_str() {
                 "--data-dir" => {
                     index += 1;
-                    let value = values.get(index).ok_or_else(|| CliError::MissingValue("--data-dir".to_string()))?;
+                    let value = values
+                        .get(index)
+                        .ok_or_else(|| CliError::MissingValue("--data-dir".to_string()))?;
                     data_dir = Some(PathBuf::from(value));
                 }
                 "--json" => json = true,
@@ -79,11 +83,21 @@ impl Invocation {
         }
 
         let command = parse_command(&filtered)?;
-        Ok(Self { command, data_dir, json })
+        Ok(Self {
+            command,
+            data_dir,
+            json,
+        })
     }
 
     pub fn needs_console(&self) -> bool {
-        !matches!(self.command, Command::Run(RunOptions { foreground: false, .. }))
+        !matches!(
+            self.command,
+            Command::Run(RunOptions {
+                foreground: false,
+                ..
+            })
+        )
     }
 }
 
@@ -128,7 +142,9 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
         "config" => match args.get(1).map(String::as_str) {
             Some("path") if args.len() == 2 => Ok(Command::ConfigPath),
             Some("show") if args.len() == 2 => Ok(Command::ConfigShow),
-            Some("validate") if args.len() <= 3 => Ok(Command::ConfigValidate(args.get(2).map(PathBuf::from))),
+            Some("validate") if args.len() <= 3 => {
+                Ok(Command::ConfigValidate(args.get(2).map(PathBuf::from)))
+            }
             Some(value) => Err(CliError::Unknown(format!("config {value}"))),
             None => Err(CliError::MissingValue("config subcommand".to_string())),
         },
@@ -145,9 +161,13 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
             None => Err(CliError::MissingValue("startup subcommand".to_string())),
         },
         "self-test" => {
-            if args.len() == 1 { return Ok(Command::SelfTest { backend: None }); }
+            if args.len() == 1 {
+                return Ok(Command::SelfTest { backend: None });
+            }
             if args.len() == 3 && args[1] == "--backend" {
-                return Ok(Command::SelfTest { backend: Some(args[2].clone()) });
+                return Ok(Command::SelfTest {
+                    backend: Some(args[2].clone()),
+                });
             }
             Err(CliError::Unknown(args[1..].join(" ")))
         }
@@ -156,7 +176,11 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
 }
 
 fn exact(args: &[String], command: Command) -> Result<Command, CliError> {
-    if args.len() == 1 { Ok(command) } else { Err(CliError::Unknown(args[1..].join(" "))) }
+    if args.len() == 1 {
+        Ok(command)
+    } else {
+        Err(CliError::Unknown(args[1..].join(" ")))
+    }
 }
 
 pub const HELP: &str = r#"DeskPilot 0.1.0

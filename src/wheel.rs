@@ -14,7 +14,10 @@ pub struct WheelState {
 
 impl Default for WheelState {
     fn default() -> Self {
-        Self { accumulator: 0, last_step_ms: None }
+        Self {
+            accumulator: 0,
+            last_step_ms: None,
+        }
     }
 }
 
@@ -67,7 +70,9 @@ pub fn target_index(
     match (step, mode) {
         (Step::Previous, NavigationMode::Clamp) => current.checked_sub(1),
         (Step::Next, NavigationMode::Clamp) => (current + 1 < count).then_some(current + 1),
-        (Step::Previous, NavigationMode::Wrap) => Some(if current == 0 { count - 1 } else { current - 1 }),
+        (Step::Previous, NavigationMode::Wrap) => {
+            Some(if current == 0 { count - 1 } else { current - 1 })
+        }
         (Step::Next, NavigationMode::Wrap) => Some((current + 1) % count),
     }
 }

@@ -11,13 +11,12 @@ use windows_sys::Win32::UI::Shell::{
     NOTIFYICONDATAW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CheckMenuItem, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
-    DestroyMenu, DispatchMessageW, GetCursorPos, GetMessageW, LoadIconW, PostMessageW,
-    PostQuitMessage, RegisterClassW, SetForegroundWindow, TrackPopupMenu, TranslateMessage,
-    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, IDI_APPLICATION, IDI_ERROR, IDI_WARNING,
-    MF_CHECKED, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, TPM_BOTTOMALIGN,
-    TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_LBUTTONDBLCLK,
-    WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
+    AppendMenuW, CheckMenuItem, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
+    DispatchMessageW, GetCursorPos, GetMessageW, LoadIconW, PostMessageW, PostQuitMessage,
+    RegisterClassW, SetForegroundWindow, TrackPopupMenu, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
+    CW_USEDEFAULT, IDI_APPLICATION, IDI_ERROR, IDI_WARNING, MF_CHECKED, MF_SEPARATOR, MF_STRING,
+    MF_UNCHECKED, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE,
+    WM_COMMAND, WM_DESTROY, WM_LBUTTONDBLCLK, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
 };
 
 use crate::config::{NavigationMode, WheelDirection};
@@ -91,12 +90,20 @@ impl TrayState {
     ) {
         self.enabled.store(enabled, Ordering::Release);
         self.dynamic.store(dynamic, Ordering::Release);
-        self.direction.store(u8::from(matches!(direction, WheelDirection::Inverted)), Ordering::Release);
-        self.navigation.store(u8::from(matches!(navigation, NavigationMode::Wrap)), Ordering::Release);
+        self.direction.store(
+            u8::from(matches!(direction, WheelDirection::Inverted)),
+            Ordering::Release,
+        );
+        self.navigation.store(
+            u8::from(matches!(navigation, NavigationMode::Wrap)),
+            Ordering::Release,
+        );
         self.startup.store(startup, Ordering::Release);
         self.error.store(error, Ordering::Release);
         if let Ok(hwnd) = self.hwnd.lock() {
-            if *hwnd != 0 { update_icon(*hwnd, error, enabled); }
+            if *hwnd != 0 {
+                update_icon(*hwnd, error, enabled);
+            }
         }
     }
 }
@@ -108,30 +115,45 @@ pub struct Tray {
 
 impl Tray {
     pub fn start(sender: Sender<TrayCommand>) -> Result<Self, String> {
-        COMMAND_SENDER.set(sender).map_err(|_| "tray command sender already initialized".to_string())?;
+        COMMAND_SENDER
+            .set(sender)
+            .map_err(|_| "tray command sender already initialized".to_string())?;
         let state = Arc::new(TrayState::new());
-        STATE.set(state.clone()).map_err(|_| "tray state already initialized".to_string())?;
+        STATE
+            .set(state.clone())
+            .map_err(|_| "tray state already initialized".to_string())?;
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let thread = thread::Builder::new()
             .name("deskpilot-tray".to_string())
             .spawn(move || tray_loop(ready_tx))
             .map_err(|error| error.to_string())?;
         ready_rx.recv().map_err(|error| error.to_string())??;
-        Ok(Self { state, thread: Some(thread) })
+        Ok(Self {
+            state,
+            thread: Some(thread),
+        })
     }
 
-    pub fn state(&self) -> &Arc<TrayState> { &self.state }
+    pub fn state(&self) -> &Arc<TrayState> {
+        &self.state
+    }
 
     pub fn stop(&mut self) {
         if let Ok(hwnd) = self.state.hwnd.lock() {
-            if *hwnd != 0 { unsafe { PostMessageW(*hwnd, WM_CLOSE, 0, 0) }; }
+            if *hwnd != 0 {
+                unsafe { PostMessageW(*hwnd, WM_CLOSE, 0, 0) };
+            }
         }
-        if let Some(thread) = self.thread.take() { let _ = thread.join(); }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
 impl Drop for Tray {
-    fn drop(&mut self) { self.stop(); }
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 fn tray_loop(ready: Sender<Result<(), String>>) -> Result<(), String> {
@@ -168,7 +190,9 @@ fn tray_loop(ready: Sender<Result<(), String>>) -> Result<(), String> {
             return Err("CreateWindowExW failed".to_string());
         }
         if let Some(state) = STATE.get() {
-            if let Ok(mut target) = state.hwnd.lock() { *target = hwnd; }
+            if let Ok(mut target) = state.hwnd.lock() {
+                *target = hwnd;
+            }
         }
         add_icon(hwnd);
         let _ = ready.send(Ok(()));
@@ -182,7 +206,12 @@ fn tray_loop(ready: Sender<Result<(), String>>) -> Result<(), String> {
     Ok(())
 }
 
-unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     match message {
         CALLBACK_MESSAGE => {
             match lparam as u32 {
@@ -219,25 +248,61 @@ unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, wparam: WPARAM, 
 }
 
 fn send(command: TrayCommand) {
-    if let Some(sender) = COMMAND_SENDER.get() { let _ = sender.send(command); }
+    if let Some(sender) = COMMAND_SENDER.get() {
+        let _ = sender.send(command);
+    }
 }
 
 fn show_menu(hwnd: HWND) {
     unsafe {
         let menu = CreatePopupMenu();
-        if menu == 0 { return; }
+        if menu == 0 {
+            return;
+        }
         let state = STATE.get();
         let enabled = state.is_some_and(|value| value.enabled.load(Ordering::Acquire));
         let dynamic = state.is_some_and(|value| value.dynamic.load(Ordering::Acquire));
         let inverted = state.is_some_and(|value| value.direction.load(Ordering::Acquire) == 1);
         let wrap = state.is_some_and(|value| value.navigation.load(Ordering::Acquire) == 1);
         let startup = state.is_some_and(|value| value.startup.load(Ordering::Acquire));
-        append(menu, CMD_TOGGLE_ENABLED, if enabled { "DeskPilot: Enabled" } else { "DeskPilot: Disabled" });
+        append(
+            menu,
+            CMD_TOGGLE_ENABLED,
+            if enabled {
+                "DeskPilot: Enabled"
+            } else {
+                "DeskPilot: Disabled"
+            },
+        );
         check(menu, CMD_TOGGLE_ENABLED, enabled);
-        append(menu, CMD_TOGGLE_DYNAMIC, if dynamic { "Dynamic desktops: Enabled" } else { "Dynamic desktops: Disabled" });
+        append(
+            menu,
+            CMD_TOGGLE_DYNAMIC,
+            if dynamic {
+                "Dynamic desktops: Enabled"
+            } else {
+                "Dynamic desktops: Disabled"
+            },
+        );
         check(menu, CMD_TOGGLE_DYNAMIC, dynamic);
-        append(menu, CMD_TOGGLE_DIRECTION, if inverted { "Direction: Inverted" } else { "Direction: Normal" });
-        append(menu, CMD_TOGGLE_NAVIGATION, if wrap { "Navigation: Wrap" } else { "Navigation: Clamp" });
+        append(
+            menu,
+            CMD_TOGGLE_DIRECTION,
+            if inverted {
+                "Direction: Inverted"
+            } else {
+                "Direction: Normal"
+            },
+        );
+        append(
+            menu,
+            CMD_TOGGLE_NAVIGATION,
+            if wrap {
+                "Navigation: Wrap"
+            } else {
+                "Navigation: Clamp"
+            },
+        );
         AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
         append(menu, CMD_RECONCILE, "Reconcile now");
         append(menu, CMD_RELOAD, "Reload configuration");
@@ -251,7 +316,15 @@ fn show_menu(hwnd: HWND) {
         let mut point = POINT::default();
         GetCursorPos(&mut point);
         SetForegroundWindow(hwnd);
-        TrackPopupMenu(menu, TPM_BOTTOMALIGN | TPM_LEFTALIGN | TPM_RIGHTBUTTON, point.x, point.y, 0, hwnd, std::ptr::null());
+        TrackPopupMenu(
+            menu,
+            TPM_BOTTOMALIGN | TPM_LEFTALIGN | TPM_RIGHTBUTTON,
+            point.x,
+            point.y,
+            0,
+            hwnd,
+            std::ptr::null(),
+        );
         DestroyMenu(menu);
     }
 }
@@ -261,10 +334,18 @@ unsafe fn append(menu: isize, id: usize, label: &str) {
 }
 
 unsafe fn check(menu: isize, id: usize, checked: bool) {
-    unsafe { CheckMenuItem(menu, id as u32, if checked { MF_CHECKED } else { MF_UNCHECKED }) };
+    unsafe {
+        CheckMenuItem(
+            menu,
+            id as u32,
+            if checked { MF_CHECKED } else { MF_UNCHECKED },
+        )
+    };
 }
 
-fn add_icon(hwnd: HWND) { update_icon(hwnd, false, true); }
+fn add_icon(hwnd: HWND) {
+    update_icon(hwnd, false, true);
+}
 
 fn update_icon(hwnd: HWND, error: bool, enabled: bool) {
     unsafe {
@@ -274,11 +355,30 @@ fn update_icon(hwnd: HWND, error: bool, enabled: bool) {
         data.uID = TRAY_ID;
         data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         data.uCallbackMessage = CALLBACK_MESSAGE;
-        data.hIcon = LoadIconW(0, if error { IDI_ERROR } else if enabled { IDI_APPLICATION } else { IDI_WARNING });
-        let tip = wide(if error { "DeskPilot — backend error" } else if enabled { "DeskPilot — enabled" } else { "DeskPilot — paused" });
-        for (target, source) in data.szTip.iter_mut().zip(tip.into_iter()) { *target = source; }
+        data.hIcon = LoadIconW(
+            0,
+            if error {
+                IDI_ERROR
+            } else if enabled {
+                IDI_APPLICATION
+            } else {
+                IDI_WARNING
+            },
+        );
+        let tip = wide(if error {
+            "DeskPilot — backend error"
+        } else if enabled {
+            "DeskPilot — enabled"
+        } else {
+            "DeskPilot — paused"
+        });
+        for (target, source) in data.szTip.iter_mut().zip(tip.into_iter()) {
+            *target = source;
+        }
         let action = if data.hIcon == 0 { NIM_ADD } else { NIM_MODIFY };
-        if Shell_NotifyIconW(action, &data) == 0 { let _ = Shell_NotifyIconW(NIM_ADD, &data); }
+        if Shell_NotifyIconW(action, &data) == 0 {
+            let _ = Shell_NotifyIconW(NIM_ADD, &data);
+        }
     }
 }
 

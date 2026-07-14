@@ -13,9 +13,18 @@ fn standard_wheel_generates_one_step() {
 #[test]
 fn high_resolution_deltas_accumulate() {
     let mut state = WheelState::default();
-    assert_eq!(state.feed(30, 1_000, 120, 180, WheelDirection::Normal), None);
-    assert_eq!(state.feed(30, 1_010, 120, 180, WheelDirection::Normal), None);
-    assert_eq!(state.feed(30, 1_020, 120, 180, WheelDirection::Normal), None);
+    assert_eq!(
+        state.feed(30, 1_000, 120, 180, WheelDirection::Normal),
+        None
+    );
+    assert_eq!(
+        state.feed(30, 1_010, 120, 180, WheelDirection::Normal),
+        None
+    );
+    assert_eq!(
+        state.feed(30, 1_020, 120, 180, WheelDirection::Normal),
+        None
+    );
     assert_eq!(
         state.feed(30, 1_030, 120, 180, WheelDirection::Normal),
         Some(Step::Previous)
@@ -38,7 +47,10 @@ fn cooldown_suppresses_repeated_switches() {
         state.feed(-120, 1_000, 120, 180, WheelDirection::Normal),
         Some(Step::Next)
     );
-    assert_eq!(state.feed(-120, 1_050, 120, 180, WheelDirection::Normal), None);
+    assert_eq!(
+        state.feed(-120, 1_050, 120, 180, WheelDirection::Normal),
+        None
+    );
     assert_eq!(
         state.feed(-120, 1_200, 120, 180, WheelDirection::Normal),
         Some(Step::Next)
@@ -47,14 +59,23 @@ fn cooldown_suppresses_repeated_switches() {
 
 #[test]
 fn clamp_stops_at_edges() {
-    assert_eq!(target_index(0, 3, Step::Previous, NavigationMode::Clamp), None);
+    assert_eq!(
+        target_index(0, 3, Step::Previous, NavigationMode::Clamp),
+        None
+    );
     assert_eq!(target_index(2, 3, Step::Next, NavigationMode::Clamp), None);
 }
 
 #[test]
 fn wrap_cycles_at_edges() {
-    assert_eq!(target_index(0, 3, Step::Previous, NavigationMode::Wrap), Some(2));
-    assert_eq!(target_index(2, 3, Step::Next, NavigationMode::Wrap), Some(0));
+    assert_eq!(
+        target_index(0, 3, Step::Previous, NavigationMode::Wrap),
+        Some(2)
+    );
+    assert_eq!(
+        target_index(2, 3, Step::Next, NavigationMode::Wrap),
+        Some(0)
+    );
 }
 
 #[test]
