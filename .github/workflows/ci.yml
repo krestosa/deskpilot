@@ -79,27 +79,42 @@ jobs:
         shell: pwsh
         run: |
           $exe = (Resolve-Path '.\target\x86_64-pc-windows-msvc\release\DeskPilot.exe').Path
+          function Invoke-DeskPilotProcess {
+            param([string]$Name, [string[]]$Arguments)
+            $start = [System.Diagnostics.ProcessStartInfo]::new()
+            $start.FileName = $exe
+            $start.UseShellExecute = $false
+            $start.CreateNoWindow = $true
+            $start.RedirectStandardOutput = $true
+            $start.RedirectStandardError = $true
+            foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) }
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $start
+            $null = $process.Start()
+            $stdout = $process.StandardOutput.ReadToEnd()
+            $stderr = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+            $result = [pscustomobject]@{
+              ExitCode = $process.ExitCode
+              Stdout = $stdout.Trim()
+              Stderr = $stderr.Trim()
+            }
+            $stdout | Set-Content -Encoding utf8NoBOM "artifacts\$Name.stdout.txt"
+            $stderr | Set-Content -Encoding utf8NoBOM "artifacts\$Name.stderr.txt"
+            return $result
+          }
 
-          $versionProcess = Start-Process -FilePath $exe -ArgumentList @('--version') -NoNewWindow -Wait -PassThru `
-            -RedirectStandardOutput artifacts\version.stdout.txt -RedirectStandardError artifacts\version.stderr.txt
-          $version = (Get-Content -Raw artifacts\version.stdout.txt).Trim()
-          $versionError = (Get-Content -Raw artifacts\version.stderr.txt).Trim()
-          if ($versionProcess.ExitCode -ne 0) { throw "Version command failed: $versionError" }
-          if ($version -ne 'DeskPilot 0.1.0') { throw "Unexpected version output: [$version]" }
+          $version = Invoke-DeskPilotProcess -Name 'version' -Arguments @('--version')
+          if ($version.ExitCode -ne 0) { throw "Version command failed: $($version.Stderr)" }
+          if ($version.Stdout -ne 'DeskPilot 0.1.0') { throw "Unexpected version output: [$($version.Stdout)]" }
 
-          $configProcess = Start-Process -FilePath $exe -ArgumentList @('config', 'validate', '.\deskpilot.example.toml') -NoNewWindow -Wait -PassThru `
-            -RedirectStandardOutput artifacts\config-validate.stdout.txt -RedirectStandardError artifacts\config-validate.stderr.txt
-          $configOutput = (Get-Content -Raw artifacts\config-validate.stdout.txt).Trim()
-          $configError = (Get-Content -Raw artifacts\config-validate.stderr.txt).Trim()
-          if ($configProcess.ExitCode -ne 0) { throw "Config validation failed: $configError" }
-          if (-not $configOutput.StartsWith('valid:')) { throw "Unexpected config validation output: [$configOutput]" }
+          $config = Invoke-DeskPilotProcess -Name 'config-validate' -Arguments @('config', 'validate', '.\deskpilot.example.toml')
+          if ($config.ExitCode -ne 0) { throw "Config validation failed: $($config.Stderr)" }
+          if (-not $config.Stdout.StartsWith('valid:')) { throw "Unexpected config validation output: [$($config.Stdout)]" }
 
-          $selfTestProcess = Start-Process -FilePath $exe -ArgumentList @('self-test', '--backend', 'mock', '--json') -NoNewWindow -Wait -PassThru `
-            -RedirectStandardOutput artifacts\self-test.stdout.txt -RedirectStandardError artifacts\self-test.stderr.txt
-          $selfTestText = (Get-Content -Raw artifacts\self-test.stdout.txt).Trim()
-          $selfTestError = (Get-Content -Raw artifacts\self-test.stderr.txt).Trim()
-          if ($selfTestProcess.ExitCode -ne 0) { throw "Mock self-test failed: $selfTestError" }
-          $selfTest = $selfTestText | ConvertFrom-Json
+          $selfTestResult = Invoke-DeskPilotProcess -Name 'self-test' -Arguments @('self-test', '--backend', 'mock', '--json')
+          if ($selfTestResult.ExitCode -ne 0) { throw "Mock self-test failed: $($selfTestResult.Stderr)" }
+          $selfTest = $selfTestResult.Stdout | ConvertFrom-Json
           if (-not $selfTest.passed -or $selfTest.backend -ne 'mock') { throw 'Mock backend self-test returned an invalid result.' }
 
       - name: Verify exact license
