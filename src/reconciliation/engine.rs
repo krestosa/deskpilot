@@ -5,7 +5,6 @@ use super::{plan, DesktopId, DesktopState, Mutation};
 pub trait ReconcileBackend {
     fn snapshot(&mut self) -> Result<Vec<DesktopState>, String>;
     fn create_desktop(&mut self) -> Result<DesktopId, String>;
-    fn switch_desktop(&mut self, desktop: &DesktopId) -> Result<(), String>;
     fn remove_desktop(&mut self, desktop: &DesktopId, fallback: &DesktopId) -> Result<(), String>;
 }
 
@@ -55,8 +54,9 @@ pub fn apply_plan<B: ReconcileBackend>(
         for mutation in next.mutations {
             let result = match &mutation {
                 Mutation::CreateTrailing => backend.create_desktop().map(|_| ()),
-                Mutation::Switch { desktop } => backend.switch_desktop(desktop),
-                Mutation::Remove { desktop, fallback } => backend.remove_desktop(desktop, fallback),
+                Mutation::Remove { desktop, fallback } => {
+                    backend.remove_desktop(desktop, fallback)
+                }
             };
             result.map_err(|cause| ReconcileError::Mutation {
                 operation: format!("{mutation:?}"),
