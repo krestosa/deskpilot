@@ -6,10 +6,19 @@ on:
       - feature/portable-dynamic-desktop-manager
     paths:
       - .github/workflows/materialize-source.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/materialize-source.yml
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: deskpilot-materialize
+  cancel-in-progress: false
 
 jobs:
   materialize:
@@ -17,6 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: feature/portable-dynamic-desktop-manager
           fetch-depth: 0
       - name: Reconstruct source tree
         shell: bash
