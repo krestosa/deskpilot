@@ -34,13 +34,20 @@ impl WinvdBackend {
     pub fn detect() -> Self {
         let version = windows_version();
         let compatible = version.major == 10
-            && ((version.build == 26_100 && version.build >= 26_100) || version.build == 26_200);
+            && match version.build {
+                26_100 => version.revision >= 2_605,
+                26_200 => version.revision >= 8_117,
+                _ => false,
+            };
         let compatibility_reason = if compatible {
-            format!("recognized Windows 11 build family {}", version.build)
+            format!(
+                "recognized Windows 11 build {}.{}",
+                version.build, version.revision
+            )
         } else {
             format!(
-                "unsupported Windows build {}.{}.{}; destructive desktop operations are disabled",
-                version.major, version.minor, version.build
+                "unsupported Windows build {}.{}.{}.{}; destructive desktop operations are disabled",
+                version.major, version.minor, version.build, version.revision
             )
         };
         Self {
