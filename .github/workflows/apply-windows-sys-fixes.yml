@@ -6,6 +6,12 @@ on:
       - feature/portable-dynamic-desktop-manager
     paths:
       - '.github/workflows/apply-windows-sys-fixes.yml'
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches:
+      - main
+    paths:
+      - '.github/workflows/apply-windows-sys-fixes.yml'
   workflow_dispatch:
 
 permissions:
@@ -21,6 +27,7 @@ env:
 
 jobs:
   apply:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
