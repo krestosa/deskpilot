@@ -1,0 +1,55 @@
+name: Apply final Clippy fixes
+
+on:
+  push:
+    branches:
+      - feature/portable-dynamic-desktop-manager
+    paths:
+      - '.github/workflows/final-clippy-fixes.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deskpilot-final-clippy-fixes
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/portable-dynamic-desktop-manager
+          fetch-depth: 0
+      - name: Install stable Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add rustfmt clippy
+      - name: Apply deterministic Clippy fixes
+        shell: pwsh
+        run: |
+          $encoded = 'ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCgpkZWYgcmVwbGFjZShwYXRoLCBvbGQsIG5ldyk6CiAgICBwPVBhdGgocGF0aCkKICAgIHRleHQ9cC5yZWFkX3RleHQoZW5jb2Rpbmc9J3V0Zi04JykKICAgIGlmIG9sZCBub3QgaW4gdGV4dDoKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KGYnZXhwZWN0ZWQgcGF0dGVybiBtaXNzaW5nIGluIHtwYXRofToge29sZFs6ODBdIXJ9JykKICAgIHAud3JpdGVfdGV4dCh0ZXh0LnJlcGxhY2Uob2xkLG5ldywxKSxlbmNvZGluZz0ndXRmLTgnLG5ld2xpbmU9J1xuJykKCnJlcGxhY2UoJ3NyYy9jb25maWcucnMnLCAnJycjW2Rlcml2ZShEZWJ1ZywgQ2xvbmUsIENvcHksIFNlcmlhbGl6ZSwgRGVzZXJpYWxpemUsIFBhcnRpYWxFcSwgRXEpXQojW3NlcmRlKHJlbmFtZV9hbGwgPSAibG93ZXJjYXNlIildCnB1YiBlbnVtIFdoZWVsRGlyZWN0aW9uIHsKICAgIE5vcm1hbCwKJycnLCAnJycjW2Rlcml2ZShEZWJ1ZywgQ2xvbmUsIENvcHksIERlZmF1bHQsIFNlcmlhbGl6ZSwgRGVzZXJpYWxpemUsIFBhcnRpYWxFcSwgRXEpXQojW3NlcmRlKHJlbmFtZV9hbGwgPSAibG93ZXJjYXNlIildCnB1YiBlbnVtIFdoZWVsRGlyZWN0aW9uIHsKICAgICNbZGVmYXVsdF0KICAgIE5vcm1hbCwKJycnKQpyZXBsYWNlKCdzcmMvY29uZmlnLnJzJywgJycnI1tkZXJpdmUoRGVidWcsIENsb25lLCBDb3B5LCBTZXJpYWxpemUsIERlc2VyaWFsaXplLCBQYXJ0aWFsRXEsIEVxKV0KI1tzZXJkZShyZW5hbWVfYWxsID0gImxvd2VyY2FzZSIpXQpwdWIgZW51bSBOYXZpZ2F0aW9uTW9kZSB7CiAgICBDbGFtcCwKJycnLCAnJycjW2Rlcml2ZShEZWJ1ZywgQ2xvbmUsIENvcHksIERlZmF1bHQsIFNlcmlhbGl6ZSwgRGVzZXJpYWxpemUsIFBhcnRpYWxFcSwgRXEpXQojW3NlcmRlKHJlbmFtZV9hbGwgPSAibG93ZXJjYXNlIildCnB1YiBlbnVtIE5hdmlnYXRpb25Nb2RlIHsKICAgICNbZGVmYXVsdF0KICAgIENsYW1wLAonJycpCnJlcGxhY2UoJ3NyYy9jb25maWcucnMnLCAnJydpbXBsIERlZmF1bHQgZm9yIFdoZWVsRGlyZWN0aW9uIHsKICAgIGZuIGRlZmF1bHQoKSAtPiBTZWxmIHsKICAgICAgICBTZWxmOjpOb3JtYWwKICAgIH0KfQoKaW1wbCBEZWZhdWx0IGZvciBOYXZpZ2F0aW9uTW9kZSB7CiAgICBmbiBkZWZhdWx0KCkgLT4gU2VsZiB7CiAgICAgICAgU2VsZjo6Q2xhbXAKICAgIH0KfQoKJycnLCAnJykKcmVwbGFjZSgnc3JjL2xvZ2dpbmcucnMnLCAnc3RkOjppbzo6RXJyb3I6Om5ldyhzdGQ6OmlvOjpFcnJvcktpbmQ6Ok90aGVyLCAibG9nZ2VyIGluaXRpYWxpemF0aW9uIGZhaWxlZCIpJywgJ3N0ZDo6aW86OkVycm9yOjpvdGhlcigibG9nZ2VyIGluaXRpYWxpemF0aW9uIGZhaWxlZCIpJykKcmVwbGFjZSgnc3JjL3doZWVsLnJzJywgJyNbZGVyaXZlKERlYnVnLCBDbG9uZSldXG5wdWIgc3RydWN0IFdoZWVsU3RhdGUgeycsICcjW2Rlcml2ZShEZWJ1ZywgQ2xvbmUsIERlZmF1bHQpXVxucHViIHN0cnVjdCBXaGVlbFN0YXRlIHsnKQpyZXBsYWNlKCdzcmMvd2hlZWwucnMnLCAnJydpbXBsIERlZmF1bHQgZm9yIFdoZWVsU3RhdGUgewogICAgZm4gZGVmYXVsdCgpIC0+IFNlbGYgewogICAgICAgIFNlbGYgewogICAgICAgICAgICBhY2N1bXVsYXRvcjogMCwKICAgICAgICAgICAgbGFzdF9zdGVwX21zOiBOb25lLAogICAgICAgIH0KICAgIH0KfQoKJycnLCAnJykKcmVwbGFjZSgnc3JjL2lwYy5ycycsICdsZXQgbXV0IG1vZGUgPSBQSVBFX1JFQURNT0RFX01FU1NBR0U7JywgJ2xldCBtb2RlID0gUElQRV9SRUFETU9ERV9NRVNTQUdFOycpCnJlcGxhY2UoJ3NyYy9pcGMucnMnLCAnU2V0TmFtZWRQaXBlSGFuZGxlU3RhdGUoaGFuZGxlLCAmbXV0IG1vZGUsJywgJ1NldE5hbWVkUGlwZUhhbmRsZVN0YXRlKGhhbmRsZSwgJm1vZGUsJykKcmVwbGFjZSgnc3JjL2lwYy5ycycsICdsZXQgbXV0IGF0dHJpYnV0ZXMgPSBTRUNVUklUWV9BVFRSSUJVVEVTIHsnLCAnbGV0IGF0dHJpYnV0ZXMgPSBTRUNVUklUWV9BVFRSSUJVVEVTIHsnKQpyZXBsYWNlKCdzcmMvaXBjLnJzJywgJyZtdXQgYXR0cmlidXRlcyxcbiAgICAgICAgKTsnLCAnJmF0dHJpYnV0ZXMsXG4gICAgICAgICk7JykKcmVwbGFjZSgnc3JjL3RyYXkucnMnLCAnZGF0YS5zelRpcC5pdGVyX211dCgpLnppcCh0aXAuaW50b19pdGVyKCkpJywgJ2RhdGEuc3pUaXAuaXRlcl9tdXQoKS56aXAodGlwKScpCg=='
+          $script = Join-Path $env:RUNNER_TEMP 'fix-clippy.py'
+          python -c "import base64,pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(sys.argv[2]))" $script $encoded
+          python $script
+          cargo fmt --all
+          git add src
+          git diff --cached --check
+      - name: Validate source
+        shell: pwsh
+        run: |
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+          cargo build --release --locked --target x86_64-pc-windows-msvc
+      - name: Publish validated fixes
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Resolve strict Clippy diagnostics'
+          git push origin HEAD:feature/portable-dynamic-desktop-manager
