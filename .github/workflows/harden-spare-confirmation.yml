@@ -33,6 +33,7 @@ jobs:
           if (Select-String -Path src\reconciliation\spare_guard.rs -SimpleMatch 'REQUIRED_CONFIRMATIONS' -Quiet) {
             Write-Host 'Persistent confirmation hardening already applied.'
           } else {
+            python tools/fix_hardening_materializer.py
             python tools/harden_spare_confirmation.py
           }
 
