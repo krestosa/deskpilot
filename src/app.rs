@@ -157,7 +157,14 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
             .min(Duration::from_secs(1));
 
         match signal_rx.recv_timeout(timeout) {
-            Ok(AppSignal::Navigation(step)) => state.navigate(step),
+            Ok(AppSignal::Navigation(step)) => {
+                state.navigate(step);
+                let delay = state.config_read().desktops.reconcile_delay_ms;
+                schedule_reconcile_at_earliest(
+                    &mut pending_reconcile,
+                    Instant::now() + Duration::from_millis(delay),
+                );
+            }
             Ok(AppSignal::Tray(command)) => {
                 if state.handle_tray(command, tray.as_ref())? {
                     pending_reconcile = Some(Instant::now());
@@ -171,7 +178,10 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
             }
             Ok(AppSignal::DesktopEvent | AppSignal::WindowEvent) => {
                 let delay = state.config_read().desktops.reconcile_delay_ms;
-                pending_reconcile = Some(Instant::now() + Duration::from_millis(delay));
+                schedule_reconcile_at_earliest(
+                    &mut pending_reconcile,
+                    Instant::now() + Duration::from_millis(delay),
+                );
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -189,7 +199,7 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
 
         let now = Instant::now();
         if now >= next_watchdog {
-            pending_reconcile.get_or_insert(now);
+            schedule_reconcile_at_earliest(&mut pending_reconcile, now);
             next_watchdog =
                 now + Duration::from_millis(config_snapshot.desktops.watchdog_interval_ms);
         }
@@ -219,6 +229,13 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
     log(LogLevel::Info, "shutdown complete");
     drop(instance);
     Ok(())
+}
+
+fn schedule_reconcile_at_earliest(pending: &mut Option<Instant>, deadline: Instant) {
+    match pending {
+        Some(current) if *current <= deadline => {}
+        _ => *pending = Some(deadline),
+    }
 }
 
 struct AppState {
@@ -699,6 +716,29 @@ fn install_panic_hook(data_dir: &Path) {
                 .unwrap_or(message.as_bytes()),
         );
     }));
+}
+
+#[cfg(test)]
+mod scheduling_tests {
+    use super::schedule_reconcile_at_earliest;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn repeated_window_events_cannot_postpone_reconciliation() {
+        let now = Instant::now();
+        let first = now + Duration::from_millis(250);
+        let mut pending = Some(first);
+        schedule_reconcile_at_earliest(&mut pending, now + Duration::from_secs(2));
+        assert_eq!(pending, Some(first));
+    }
+
+    #[test]
+    fn watchdog_advances_a_later_pending_reconciliation() {
+        let now = Instant::now();
+        let mut pending = Some(now + Duration::from_secs(2));
+        schedule_reconcile_at_earliest(&mut pending, now);
+        assert_eq!(pending, Some(now));
+    }
 }
 
 struct InstanceGuard {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5
+
+- Detect newly opened windows on the active desktop through the official virtual desktop manager path before internal GUID mapping.
+- Prevent repeated window events from postponing reconciliation indefinitely; the earliest deadline wins and the watchdog can force an immediate pass.
+- Reconcile after successful wheel navigation so occupying the trailing spare always creates a new empty desktop.
+
 ## 0.1.4
 
 - Intercepted the final physical Windows-key release after a consumed Win+wheel gesture and replaced it with a marked Control+Windows release sequence so Start cannot treat the gesture as a standalone Win press.

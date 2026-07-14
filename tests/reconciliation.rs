@@ -34,6 +34,14 @@ fn occupied_creates_trailing_spare() {
 }
 
 #[test]
+fn active_occupied_last_desktop_creates_a_new_spare() {
+    let mut snapshot = states(&[Occupancy::Occupied, Occupancy::Occupied]);
+    set_current(&mut snapshot, 1);
+    let result = plan(&snapshot);
+    assert_eq!(result.mutations, vec![Mutation::CreateTrailing]);
+}
+
+#[test]
 fn occupied_then_empty_is_stable() {
     let result = plan(&states(&[Occupancy::Occupied, Occupancy::Empty]));
     assert!(result.stable);
