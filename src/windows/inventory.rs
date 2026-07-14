@@ -87,10 +87,12 @@ pub fn detailed_snapshot(
 
         if let Some(desktop) = locate_window_desktop(backend, &desktops, &current.id, hwnd) {
             occupancy.insert(desktop.clone(), Occupancy::Occupied);
-            windows
-                .entry(desktop)
-                .or_default()
-                .insert(hwnd as usize as crate::reconciliation::WindowToken);
+            if window_is_visible_user_surface(hwnd) {
+                windows
+                    .entry(desktop)
+                    .or_default()
+                    .insert(hwnd as usize as crate::reconciliation::WindowToken);
+            }
         }
     }
 
@@ -233,7 +235,7 @@ fn is_eligible_application_window(hwnd: HWND) -> bool {
         if ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) != 0 {
             return false;
         }
-        IsWindowVisible(hwnd) != 0 || window_is_cloaked(hwnd)
+        IsWindowVisible(hwnd) != 0 || window_is_shell_cloaked(hwnd)
     }
 }
 
@@ -248,18 +250,37 @@ fn is_foreground_application_window(hwnd: HWND) -> bool {
     }
 }
 
-// Function purpose: Performs the window is cloaked operation required by this module.
-fn window_is_cloaked(hwnd: HWND) -> bool {
+// Function purpose: Returns the complete DWM cloak-reason bitset or zero when the attribute cannot be read.
+fn window_cloak_flags(hwnd: HWND) -> u32 {
     unsafe {
         let mut cloaked = 0_u32;
-        DwmGetWindowAttribute(
+        if DwmGetWindowAttribute(
             hwnd,
             DWMWA_CLOAKED as u32,
             (&mut cloaked as *mut u32).cast::<c_void>(),
             size_of::<u32>() as u32,
         ) >= 0
-            && cloaked & 0x2 != 0
+        {
+            cloaked
+        } else {
+            0
+        }
     }
+}
+
+// Function purpose: Reports any DWM cloak reason for foreground and visibility validation.
+fn window_is_cloaked(hwnd: HWND) -> bool {
+    window_cloak_flags(hwnd) != 0
+}
+
+// Function purpose: Counts inactive application windows only when Windows shell virtual-desktop cloaking is present.
+fn window_is_shell_cloaked(hwnd: HWND) -> bool {
+    window_cloak_flags(hwnd) & 0x2 != 0
+}
+
+// Function purpose: Restricts spare-consumption evidence to an actually visible, non-cloaked user surface on the current desktop.
+fn window_is_visible_user_surface(hwnd: HWND) -> bool {
+    (unsafe { IsWindowVisible(hwnd) != 0 }) && !window_is_cloaked(hwnd)
 }
 
 // Function purpose: Performs the executable name operation required by this module.

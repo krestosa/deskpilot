@@ -223,7 +223,8 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
         }
         if pending_reconcile.is_some_and(|deadline| now >= deadline) {
             let follow_up = if config_snapshot.desktops.dynamic && !state.dynamic_forced_off {
-                matches!(state.reconcile(), ReconcilePass::Mutated(_))
+                let pass = state.reconcile();
+                matches!(pass, ReconcilePass::Mutated(_)) || state.spare_guard.needs_confirmation()
             } else {
                 false
             };
