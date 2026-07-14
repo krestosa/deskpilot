@@ -9,16 +9,14 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_BROKEN_PIPE, ERROR_PIPE_CONNECTED, HANDLE,
-    INVALID_HANDLE_VALUE,
+    CloseHandle, GetLastError, LocalFree, ERROR_BROKEN_PIPE, ERROR_PIPE_CONNECTED, GENERIC_READ,
+    GENERIC_WRITE, HANDLE, HLOCAL, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
-use windows_sys::Win32::Security::{SDDL_REVISION_1, SECURITY_ATTRIBUTES};
+use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, GENERIC_READ,
-    GENERIC_WRITE, OPEN_EXISTING,
+    CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING,
 };
-use windows_sys::Win32::System::Memory::LocalFree;
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, SetNamedPipeHandleState,
     WaitNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_WAIT,
@@ -29,6 +27,7 @@ use crate::windows::util::wide;
 
 const MAX_MESSAGE: usize = 64 * 1024;
 const IPC_TIMEOUT_MS: u32 = 5_000;
+const SDDL_REVISION_1: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpcRequest {
@@ -296,7 +295,7 @@ fn create_server_pipe(name: &str) -> Result<HANDLE, String> {
             IPC_TIMEOUT_MS,
             &mut attributes,
         );
-        LocalFree(descriptor as isize);
+        LocalFree(descriptor as HLOCAL);
         if pipe == INVALID_HANDLE_VALUE {
             return Err(format!("CreateNamedPipeW failed: {}", GetLastError()));
         }
