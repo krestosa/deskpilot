@@ -1,0 +1,58 @@
+name: Apply compiler-supported DeskPilot repairs
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deskpilot-compiler-repair
+  cancel-in-progress: false
+
+env:
+  TARGET: x86_64-pc-windows-msvc
+
+jobs:
+  repair:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Require clean materialized source
+        shell: pwsh
+        run: |
+          if (-not (Test-Path Cargo.toml) -or -not (Test-Path Cargo.lock)) { throw 'Materialized locked source is required.' }
+          if (Test-Path .deskpilot-bootstrap) { throw 'Transport files remain.' }
+      - name: Install Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add $env:TARGET
+          rustup component add rustfmt clippy
+      - name: Apply machine-supported fixes
+        id: fix
+        shell: pwsh
+        run: |
+          cargo fix --workspace --all-targets --target $env:TARGET --locked --allow-dirty --allow-staged
+          $fixCode = $LASTEXITCODE
+          cargo clippy --fix --workspace --all-targets --target $env:TARGET --locked --allow-dirty --allow-staged -- -D warnings
+          $clippyCode = $LASTEXITCODE
+          cargo fmt --all
+          Remove-Item .github\workflows\compiler-repair.yml -Force -ErrorAction SilentlyContinue
+          git add --all
+          git diff --cached --check
+          if (-not (git diff --cached --quiet)) {
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Apply compiler-supported Rust corrections'
+            git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+            exit 0
+          }
+          if ($fixCode -ne 0 -or $clippyCode -ne 0) { throw 'Compiler reported errors without machine-applicable corrections.' }
