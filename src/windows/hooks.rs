@@ -11,7 +11,7 @@ use windows_sys::Win32::System::SystemInformation::GetTickCount64;
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-    VK_LWIN, VK_NONAME, VK_RWIN,
+    VK_CONTROL, VK_LWIN, VK_RWIN,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
@@ -65,9 +65,11 @@ impl HookController {
     pub fn set_enabled(&self, enabled: bool) {
         self.context.enabled.store(enabled, Ordering::Release);
     }
+
     pub fn set_backend_ready(&self, ready: bool) {
         self.context.backend_ready.store(ready, Ordering::Release);
     }
+
     pub fn set_suspended(&self, suspended: bool) {
         self.context.suspended.store(suspended, Ordering::Release);
     }
@@ -112,27 +114,29 @@ fn run_hook_loop(context: &HookContext) -> Result<(), String> {
 unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 && wparam as u32 == WM_MOUSEWHEEL {
         if let Some(context) = CONTEXT.get() {
-            if context.enabled.load(Ordering::Acquire)
+            let active = context.enabled.load(Ordering::Acquire)
                 && context.backend_ready.load(Ordering::Acquire)
-                && !context.suspended.load(Ordering::Acquire)
-                && win_pressed()
-            {
-                let event = unsafe { &*(lparam as *const MSLLHOOKSTRUCT) };
-                let delta = ((event.mouseData >> 16) as u16) as i16 as i32;
-                let config = context.config.read().ok().map(|value| value.wheel.clone());
-                if let Some(config) = config {
-                    if let Ok(mut wheel) = context.wheel.try_lock() {
-                        if let Some(step) = wheel.feed(
-                            delta,
-                            unsafe { GetTickCount64() },
-                            config.threshold,
-                            config.cooldown_ms,
-                            config.direction,
-                        ) {
-                            if context.navigation.send(step).is_ok() {
-                                suppress_start_menu();
-                                return 1;
-                            }
+                && !context.suspended.load(Ordering::Acquire);
+            if !active || !win_pressed() {
+                reset_wheel(context);
+                return unsafe { CallNextHookEx(0 as HHOOK, code, wparam, lparam) };
+            }
+
+            let event = unsafe { &*(lparam as *const MSLLHOOKSTRUCT) };
+            let delta = ((event.mouseData >> 16) as u16) as i16 as i32;
+            let config = context.config.read().ok().map(|value| value.wheel.clone());
+            if let Some(config) = config {
+                if let Ok(mut wheel) = context.wheel.try_lock() {
+                    if let Some(step) = wheel.feed(
+                        delta,
+                        unsafe { GetTickCount64() },
+                        config.threshold,
+                        config.cooldown_ms,
+                        config.direction,
+                    ) {
+                        suppress_start_menu();
+                        if context.navigation.send(step).is_ok() {
+                            return 1;
                         }
                     }
                 }
@@ -140,6 +144,12 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
         }
     }
     unsafe { CallNextHookEx(0 as HHOOK, code, wparam, lparam) }
+}
+
+fn reset_wheel(context: &HookContext) {
+    if let Ok(mut wheel) = context.wheel.try_lock() {
+        wheel.reset();
+    }
 }
 
 fn win_pressed() -> bool {
@@ -150,32 +160,8 @@ fn win_pressed() -> bool {
 }
 
 fn suppress_start_menu() {
+    let inputs = start_suppression_inputs();
     unsafe {
-        let down = INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: VK_NONAME,
-                    wScan: 0,
-                    dwFlags: 0,
-                    time: 0,
-                    dwExtraInfo: 0,
-                },
-            },
-        };
-        let up = INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: VK_NONAME,
-                    wScan: 0,
-                    dwFlags: KEYEVENTF_KEYUP,
-                    time: 0,
-                    dwExtraInfo: 0,
-                },
-            },
-        };
-        let inputs = [down, up];
         let _ = SendInput(
             inputs.len() as u32,
             inputs.as_ptr(),
@@ -184,7 +170,52 @@ fn suppress_start_menu() {
     }
 }
 
+fn start_suppression_inputs() -> [INPUT; 2] {
+    let down = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_CONTROL,
+                wScan: 0,
+                dwFlags: 0,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let up = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_CONTROL,
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    [down, up]
+}
+
 #[allow(dead_code)]
 fn _assert_structs() {
     let _: Option<KBDLLHOOKSTRUCT> = None;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::start_suppression_inputs;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_CONTROL, KEYEVENTF_KEYUP};
+
+    #[test]
+    fn start_suppression_emits_complete_control_chord() {
+        let inputs = start_suppression_inputs();
+        let down = unsafe { inputs[0].Anonymous.ki };
+        let up = unsafe { inputs[1].Anonymous.ki };
+        assert_eq!(down.wVk, VK_CONTROL);
+        assert_eq!(down.dwFlags, 0);
+        assert_eq!(up.wVk, VK_CONTROL);
+        assert_eq!(up.dwFlags, KEYEVENTF_KEYUP);
+    }
 }
