@@ -24,9 +24,21 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
     throw "Release executable not found: $exe"
 }
 
-$versionLine = & $exe --version
-if ($LASTEXITCODE -ne 0 -or $versionLine -notmatch '^DeskPilot\s+(?<version>\d+\.\d+\.\d+)') {
-    throw "Unable to determine DeskPilot version from $exe"
+$versionStart = [System.Diagnostics.ProcessStartInfo]::new()
+$versionStart.FileName = $exe
+$versionStart.UseShellExecute = $false
+$versionStart.CreateNoWindow = $true
+$versionStart.RedirectStandardOutput = $true
+$versionStart.RedirectStandardError = $true
+$versionStart.ArgumentList.Add('--version')
+$versionProcess = [System.Diagnostics.Process]::new()
+$versionProcess.StartInfo = $versionStart
+$null = $versionProcess.Start()
+$versionLine = $versionProcess.StandardOutput.ReadToEnd().Trim()
+$versionError = $versionProcess.StandardError.ReadToEnd().Trim()
+$versionProcess.WaitForExit()
+if ($versionProcess.ExitCode -ne 0 -or $versionLine -notmatch '^DeskPilot\s+(?<version>\d+\.\d+\.\d+)$') {
+    throw "Unable to determine DeskPilot version from $exe (exit $($versionProcess.ExitCode)): $versionError"
 }
 $version = $Matches.version
 $packageName = "DeskPilot-portable-$version"
