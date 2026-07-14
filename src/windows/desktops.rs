@@ -33,12 +33,7 @@ pub struct WinvdBackend {
 impl WinvdBackend {
     pub fn detect() -> Self {
         let version = windows_version();
-        let compatible = version.major == 10
-            && match version.build {
-                26_100 => version.revision >= 2_605,
-                26_200 => version.revision >= 8_117,
-                _ => false,
-            };
+        let compatible = is_supported_version(version);
         let compatibility_reason = if compatible {
             format!(
                 "recognized Windows 11 build {}.{}",
@@ -170,10 +165,54 @@ impl WinvdBackend {
     }
 }
 
+fn is_supported_version(version: WindowsVersion) -> bool {
+    version.major == 10
+        && match version.build {
+            26_100 => version.revision >= 2_605,
+            26_200 => version.revision >= 8_117,
+            _ => false,
+        }
+}
+
 fn to_win_hwnd(hwnd: HWND) -> WinHwnd {
     WinHwnd(hwnd as *mut c_void)
 }
 
 fn format_error(error: impl std::fmt::Debug) -> String {
     format!("{error:?}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_supported_version, WindowsVersion};
+
+    #[test]
+    fn accepts_supported_26100_revisions() {
+        assert!(is_supported_version(WindowsVersion {
+            major: 10,
+            minor: 0,
+            build: 26_100,
+            revision: 8_655,
+        }));
+    }
+
+    #[test]
+    fn rejects_manifest_virtualized_windows_8_version() {
+        assert!(!is_supported_version(WindowsVersion {
+            major: 6,
+            minor: 2,
+            build: 9_200,
+            revision: 8_655,
+        }));
+    }
+
+    #[test]
+    fn preserves_safe_failure_for_unknown_windows_11_builds() {
+        assert!(!is_supported_version(WindowsVersion {
+            major: 10,
+            minor: 0,
+            build: 22_631,
+            revision: 5_000,
+        }));
+    }
 }
