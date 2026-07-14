@@ -1,0 +1,95 @@
+name: Finalize DeskPilot 0.1.4
+
+on:
+  push:
+    branches:
+      - fix/direct-win-release-and-window-mapping
+    paths:
+      - '.github/workflows/finalize-0.1.4.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/direct-win-release-and-window-mapping
+          fetch-depth: 0
+
+      - name: Install declared Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal --component rustfmt --component clippy --target x86_64-pc-windows-msvc
+          rustup default 1.85.0
+
+      - name: Materialize version lock and CI expectation
+        shell: pwsh
+        run: |
+          $ci = Get-Content .github\workflows\ci.yml -Raw
+          $ci = $ci.Replace('DeskPilot 0.1.3', 'DeskPilot 0.1.4')
+          Set-Content .github\workflows\ci.yml -Value $ci -Encoding utf8NoBOM -NoNewline
+          cargo check --workspace --all-targets
+          cargo fmt --all
+
+      - name: Validate finalized tree
+        shell: pwsh
+        run: |
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+          cargo build --release --locked --target x86_64-pc-windows-msvc
+          .\scripts\verify-license.ps1
+          .\scripts\build-portable.ps1 -SkipBuild
+
+          $exe = (Resolve-Path '.\target\x86_64-pc-windows-msvc\release\DeskPilot.exe').Path
+          $start = [System.Diagnostics.ProcessStartInfo]::new()
+          $start.FileName = $exe
+          $start.UseShellExecute = $false
+          $start.CreateNoWindow = $true
+          $start.RedirectStandardOutput = $true
+          $start.RedirectStandardError = $true
+          $start.ArgumentList.Add('--version')
+          $process = [System.Diagnostics.Process]::new()
+          $process.StartInfo = $start
+          $null = $process.Start()
+          $stdout = $process.StandardOutput.ReadToEnd().Trim()
+          $stderr = $process.StandardError.ReadToEnd().Trim()
+          $process.WaitForExit()
+          if ($process.ExitCode -ne 0 -or $stdout -ne 'DeskPilot 0.1.4') {
+            throw "Unexpected version result: exit=$($process.ExitCode) stdout=[$stdout] stderr=[$stderr]"
+          }
+
+      - name: Publish validated lockfile and CI
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          BRANCH: fix/direct-win-release-and-window-mapping
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+
+          function Publish-File([string]$Path, [string]$Message) {
+            $encodedPath = ($Path -split '/' | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/'
+            $uri = "https://api.github.com/repos/$env:REPOSITORY/contents/$encodedPath"
+            $metadata = Invoke-RestMethod -Method Get -Uri "$uri?ref=$env:BRANCH" -Headers $headers
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $Path))
+            $payload = @{
+              message = $Message
+              content = [Convert]::ToBase64String($bytes)
+              sha = $metadata.sha
+              branch = $env:BRANCH
+            } | ConvertTo-Json
+            Invoke-RestMethod -Method Put -Uri $uri -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
+          }
+
+          Publish-File 'Cargo.lock' 'Update lockfile for DeskPilot 0.1.4'
+          Publish-File '.github/workflows/ci.yml' 'Validate DeskPilot 0.1.4 in CI'
