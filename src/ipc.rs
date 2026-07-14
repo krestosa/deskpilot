@@ -1,7 +1,6 @@
 use crate::event::EventBus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::ffi::c_void;
 use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
@@ -10,16 +9,17 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, LocalFree, ERROR_BROKEN_PIPE, ERROR_PIPE_CONNECTED, GENERIC_READ,
-    GENERIC_WRITE, HANDLE, HLOCAL, INVALID_HANDLE_VALUE,
+    GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
 use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING,
+    PIPE_ACCESS_DUPLEX,
 };
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, SetNamedPipeHandleState,
-    WaitNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_WAIT,
+    WaitNamedPipeW, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_WAIT,
 };
 
 use crate::windows::system::current_user_sid;
@@ -295,7 +295,7 @@ fn create_server_pipe(name: &str) -> Result<HANDLE, String> {
             IPC_TIMEOUT_MS,
             &mut attributes,
         );
-        LocalFree(descriptor as HLOCAL);
+        LocalFree(descriptor);
         if pipe == INVALID_HANDLE_VALUE {
             return Err(format!("CreateNamedPipeW failed: {}", GetLastError()));
         }
@@ -316,7 +316,7 @@ unsafe fn write_message(handle: HANDLE, data: &[u8]) -> Result<(), String> {
     if unsafe {
         WriteFile(
             handle,
-            data.as_ptr().cast::<c_void>(),
+            data.as_ptr(),
             data.len() as u32,
             &mut written,
             std::ptr::null_mut(),
@@ -335,7 +335,7 @@ unsafe fn read_message(handle: HANDLE) -> Result<Vec<u8>, String> {
     if unsafe {
         ReadFile(
             handle,
-            buffer.as_mut_ptr().cast::<c_void>(),
+            buffer.as_mut_ptr(),
             buffer.len() as u32,
             &mut read,
             std::ptr::null_mut(),
