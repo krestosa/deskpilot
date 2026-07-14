@@ -718,29 +718,6 @@ fn install_panic_hook(data_dir: &Path) {
     }));
 }
 
-#[cfg(test)]
-mod scheduling_tests {
-    use super::schedule_reconcile_at_earliest;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn repeated_window_events_cannot_postpone_reconciliation() {
-        let now = Instant::now();
-        let first = now + Duration::from_millis(250);
-        let mut pending = Some(first);
-        schedule_reconcile_at_earliest(&mut pending, now + Duration::from_secs(2));
-        assert_eq!(pending, Some(first));
-    }
-
-    #[test]
-    fn watchdog_advances_a_later_pending_reconciliation() {
-        let now = Instant::now();
-        let mut pending = Some(now + Duration::from_secs(2));
-        schedule_reconcile_at_earliest(&mut pending, now);
-        assert_eq!(pending, Some(now));
-    }
-}
-
 struct InstanceGuard {
     handle: HANDLE,
     already_exists: bool,
@@ -768,5 +745,28 @@ impl Drop for InstanceGuard {
         unsafe {
             CloseHandle(self.handle);
         }
+    }
+}
+
+#[cfg(test)]
+mod scheduling_tests {
+    use super::schedule_reconcile_at_earliest;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn repeated_window_events_cannot_postpone_reconciliation() {
+        let now = Instant::now();
+        let first = now + Duration::from_millis(250);
+        let mut pending = Some(first);
+        schedule_reconcile_at_earliest(&mut pending, now + Duration::from_secs(2));
+        assert_eq!(pending, Some(first));
+    }
+
+    #[test]
+    fn watchdog_advances_a_later_pending_reconciliation() {
+        let now = Instant::now();
+        let mut pending = Some(now + Duration::from_secs(2));
+        schedule_reconcile_at_earliest(&mut pending, now);
+        assert_eq!(pending, Some(now));
     }
 }
