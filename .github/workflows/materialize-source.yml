@@ -33,51 +33,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from __future__ import annotations
-          import base64
-          import io
-          import pathlib
-          import tarfile
-
-          root = pathlib.Path('.').resolve()
-          parts = sorted((root / '.deskpilot-bootstrap').glob('part-*'))
-          if not parts:
-              raise SystemExit('no transport parts found')
-          texts = [''.join(path.read_text(encoding='utf-8').split()) for path in parts]
-          candidates: list[tuple[str, bytes]] = []
-          try:
-              candidates.append(('continuous-base64', base64.b64decode(''.join(texts), validate=True)))
-          except Exception as error:
-              print(f'continuous-base64 rejected: {error}')
-          try:
-              candidates.append(('per-part-base64', b''.join(base64.b64decode(text, validate=True) for text in texts)))
-          except Exception as error:
-              print(f'per-part-base64 rejected: {error}')
-
-          selected: tuple[str, bytes] | None = None
-          for mode, payload in candidates:
-              try:
-                  with tarfile.open(fileobj=io.BytesIO(payload), mode='r:gz') as archive:
-                      members = archive.getmembers()
-                      for member in members:
-                          target = (root / member.name).resolve()
-                          if root != target and root not in target.parents:
-                              raise RuntimeError(f'unsafe archive member: {member.name}')
-                      if not any(member.name.endswith('Cargo.toml') for member in members):
-                          raise RuntimeError('archive does not contain Cargo.toml')
-                  selected = (mode, payload)
-                  break
-              except Exception as error:
-                  print(f'{mode} archive rejected: {error}')
-          if selected is None:
-              raise SystemExit('no valid source archive candidate')
-
-          mode, payload = selected
-          print(f'selected {mode}: {len(payload)} bytes from {len(parts)} parts')
-          with tarfile.open(fileobj=io.BytesIO(payload), mode='r:gz') as archive:
-              archive.extractall(root, filter='data')
-          PY
+          echo 'ZnJvbSBfX2Z1dHVyZV9fIGltcG9ydCBhbm5vdGF0aW9ucwppbXBvcnQgYmFzZTY0CmltcG9ydCBpbwppbXBvcnQgcGF0aGxpYgppbXBvcnQgdGFyZmlsZQpyb290ID0gcGF0aGxpYi5QYXRoKCcuJykucmVzb2x2ZSgpCnBhcnRzID0gc29ydGVkKChyb290IC8gJy5kZXNrcGlsb3QtYm9vdHN0cmFwJykuZ2xvYigncGFydC0qJykpCmlmIG5vdCBwYXJ0czoKICAgIHJhaXNlIFN5c3RlbUV4aXQoJ25vIHRyYW5zcG9ydCBwYXJ0cyBmb3VuZCcpCnRleHRzID0gWycnLmpvaW4ocGF0aC5yZWFkX3RleHQoZW5jb2Rpbmc9J3V0Zi04Jykuc3BsaXQoKSkgZm9yIHBhdGggaW4gcGFydHNdCnByaW50KCdwYXJ0czonLCBbKHAubmFtZSwgbGVuKHQpKSBmb3IgcCwgdCBpbiB6aXAocGFydHMsIHRleHRzKV0pCmNhbmRpZGF0ZXMgPSBbXQp0cnk6CiAgICBjYW5kaWRhdGVzLmFwcGVuZCgoJ2NvbnRpbnVvdXMtYmFzZTY0JywgYmFzZTY0LmI2NGRlY29kZSgnJy5qb2luKHRleHRzKSwgdmFsaWRhdGU9VHJ1ZSkpKQpleGNlcHQgRXhjZXB0aW9uIGFzIGVycm9yOgogICAgcHJpbnQoZidjb250aW51b3VzLWJhc2U2NCByZWplY3RlZDoge2Vycm9yfScpCnRyeToKICAgIGNhbmRpZGF0ZXMuYXBwZW5kKCgncGVyLXBhcnQtYmFzZTY0JywgYicnLmpvaW4oYmFzZTY0LmI2NGRlY29kZSh0ZXh0LCB2YWxpZGF0ZT1UcnVlKSBmb3IgdGV4dCBpbiB0ZXh0cykpKQpleGNlcHQgRXhjZXB0aW9uIGFzIGVycm9yOgogICAgcHJpbnQoZidwZXItcGFydC1iYXNlNjQgcmVqZWN0ZWQ6IHtlcnJvcn0nKQpzZWxlY3RlZCA9IE5vbmUKZm9yIG1vZGUsIHBheWxvYWQgaW4gY2FuZGlkYXRlczoKICAgIHRyeToKICAgICAgICB3aXRoIHRhcmZpbGUub3BlbihmaWxlb2JqPWlvLkJ5dGVzSU8ocGF5bG9hZCksIG1vZGU9J3I6Z3onKSBhcyBhcmNoaXZlOgogICAgICAgICAgICBtZW1iZXJzID0gYXJjaGl2ZS5nZXRtZW1iZXJzKCkKICAgICAgICAgICAgZm9yIG1lbWJlciBpbiBtZW1iZXJzOgogICAgICAgICAgICAgICAgdGFyZ2V0ID0gKHJvb3QgLyBtZW1iZXIubmFtZSkucmVzb2x2ZSgpCiAgICAgICAgICAgICAgICBpZiByb290ICE9IHRhcmdldCBhbmQgcm9vdCBub3QgaW4gdGFyZ2V0LnBhcmVudHM6CiAgICAgICAgICAgICAgICAgICAgcmFpc2UgUnVudGltZUVycm9yKGYndW5zYWZlIGFyY2hpdmUgbWVtYmVyOiB7bWVtYmVyLm5hbWV9JykKICAgICAgICAgICAgaWYgbm90IGFueShtZW1iZXIubmFtZS5lbmRzd2l0aCgnQ2FyZ28udG9tbCcpIGZvciBtZW1iZXIgaW4gbWVtYmVycyk6CiAgICAgICAgICAgICAgICByYWlzZSBSdW50aW1lRXJyb3IoJ2FyY2hpdmUgZG9lcyBub3QgY29udGFpbiBDYXJnby50b21sJykKICAgICAgICBzZWxlY3RlZCA9IChtb2RlLCBwYXlsb2FkKQogICAgICAgIGJyZWFrCiAgICBleGNlcHQgRXhjZXB0aW9uIGFzIGVycm9yOgogICAgICAgIHByaW50KGYne21vZGV9IGFyY2hpdmUgcmVqZWN0ZWQ6IHtlcnJvcn0nKQppZiBzZWxlY3RlZCBpcyBOb25lOgogICAgcmFpc2UgU3lzdGVtRXhpdCgnbm8gdmFsaWQgc291cmNlIGFyY2hpdmUgY2FuZGlkYXRlJykKbW9kZSwgcGF5bG9hZCA9IHNlbGVjdGVkCnByaW50KGYnc2VsZWN0ZWQge21vZGV9OiB7bGVuKHBheWxvYWQpfSBieXRlcyBmcm9tIHtsZW4ocGFydHMpfSBwYXJ0cycpCndpdGggdGFyZmlsZS5vcGVuKGZpbGVvYmo9aW8uQnl0ZXNJTyhwYXlsb2FkKSwgbW9kZT0ncjpneicpIGFzIGFyY2hpdmU6CiAgICBhcmNoaXZlLmV4dHJhY3RhbGwocm9vdCwgZmlsdGVyPSdkYXRhJykK' | base64 --decode | python3
           rm -rf .deskpilot-bootstrap
           rm -f .github/workflows/materialize-source.yml
       - name: Commit materialized source
@@ -90,4 +46,3 @@ jobs:
           git diff --cached --check
           git commit -m "Materialize DeskPilot source tree"
           git push origin HEAD:feature/portable-dynamic-desktop-manager
-# retry after all six transport parts were uploaded
