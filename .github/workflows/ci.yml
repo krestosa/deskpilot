@@ -68,6 +68,18 @@ jobs:
             Tee-Object -FilePath artifacts\tests.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Validate PowerShell scripts
+        shell: pwsh
+        run: |
+          $failures = @()
+          Get-ChildItem .\scripts -Filter '*.ps1' -File | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            foreach ($error in $errors) { $failures += "$($_.Name): $($error.Message)" }
+          }
+          if ($failures.Count -gt 0) { throw ($failures -join [Environment]::NewLine) }
+
       - name: Release build
         shell: pwsh
         run: |
@@ -123,7 +135,10 @@ jobs:
 
       - name: Build portable package
         shell: pwsh
-        run: .\scripts\build-portable.ps1 -SkipBuild
+        run: |
+          .\scripts\build-portable.ps1 -SkipBuild 2>&1 |
+            Tee-Object -FilePath artifacts\package.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify portable structure and checksums
         shell: pwsh
