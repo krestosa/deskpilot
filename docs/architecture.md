@@ -43,7 +43,9 @@ watchdog ────┘                              ├─> structured event b
                                                └─> tray state
 ```
 
-Hooks never call COM or inspect windows. They accumulate wheel deltas, apply direction/threshold/cooldown, enqueue at most one navigation step, and consume the wheel event only when the enqueue succeeds.
+Hooks never call COM or inspect windows. They accumulate wheel deltas, apply direction/threshold/cooldown, enqueue at most one navigation step, and consume the wheel event only when the enqueue succeeds. After a processed Win+wheel gesture the hook emits a complete synthetic Control down/up pair while Win is still held; this marks the Win press as a chord and prevents the shell from opening Start when Win is released. Partial wheel state is cleared when Win is not held or the hook is disabled, suspended or backend-unavailable.
+
+Fullscreen suspension is decided by the coordinator, not the hook callback. The foreground window must be a visible, non-cloaked, ownerless user-application window covering its monitor. Desktop, taskbar, Start, Search, shell-host and text-input surfaces are explicitly excluded, so arriving on an empty desktop cannot suspend navigation.
 
 ## Desktop reconciliation
 
@@ -56,7 +58,7 @@ known internal empty desktops == 0, except an empty desktop currently held by th
 known user windows moved or closed == 0
 ```
 
-The inventory maps eligible top-level windows to desktops. Windows on inactive virtual desktops may be DWM-cloaked, so cloaking alone is not treated as absence. Pinned windows are excluded. Any non-pinned residual window, failed mapping or ambiguous pin query makes the desktop non-removable.
+The inventory first rejects shell classes, DeskPilot's own windows, owned/tool/no-activate helpers and built-in shell-host executables. Only plausible user-application windows are mapped to desktops. Windows on inactive virtual desktops may be DWM-cloaked, so cloaking alone is not treated as absence. Pinned windows are excluded. A failed mapping, executable inspection or pin query for a plausible application window produces `unknown`; unrelated auxiliary shell windows do not block cleanup.
 
 The planner is deterministic and has no Win32 dependencies. Normal reconciliation emits only:
 
