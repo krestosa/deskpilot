@@ -25,8 +25,10 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout
+      - name: Checkout exact source SHA
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install stable Rust MSVC
         shell: pwsh
@@ -46,12 +48,15 @@ jobs:
 
       - name: Check formatting
         shell: pwsh
-        run: cargo fmt --all -- --check
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          cargo fmt --all -- --check 2>&1 |
+            Tee-Object -FilePath artifacts\format.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Clippy
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force artifacts | Out-Null
           cargo clippy --workspace --all-targets --locked -- -D warnings 2>&1 |
             Tee-Object -FilePath artifacts\clippy.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -142,7 +147,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: DeskPilot-portable-${{ github.sha }}
+          name: DeskPilot-portable-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             dist/*.zip
             dist/package-report.json
