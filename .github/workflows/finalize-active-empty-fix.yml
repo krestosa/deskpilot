@@ -100,7 +100,14 @@ pub enum NavigationMode {
 '@
           Replace-Exact 'src\config.rs' '            navigation: NavigationMode::Clamp,' '            navigation: NavigationMode::Wrap,'
 
-          Replace-Exact 'deskpilot.example.toml' '# "clamp": stop at the first/last desktop. "wrap": cycle around.`nnavigation = "clamp"' '# "wrap": cycle from the last desktop to the first and from the first to the last.`n# "clamp" remains available when stopping at the edges is preferred.`nnavigation = "wrap"'
+          Replace-Exact 'deskpilot.example.toml' @'
+# "clamp": stop at the first/last desktop. "wrap": cycle around.
+navigation = "clamp"
+'@ @'
+# "wrap": cycle from the last desktop to the first and from the first to the last.
+# "clamp" remains available when stopping at the edges is preferred.
+navigation = "wrap"
+'@
 
           Replace-Exact 'tests\config.rs' 'use deskpilot::config::{Config, ConfigError, CONFIG_SCHEMA_VERSION};' 'use deskpilot::config::{Config, ConfigError, NavigationMode, CONFIG_SCHEMA_VERSION};'
           Replace-Exact 'tests\config.rs' @'
@@ -112,8 +119,8 @@ pub enum NavigationMode {
     config.validate().expect("defaults must validate");
 '@
 
-          Replace-Exact 'src\windows\inventory.rs' 'use std::ffi::c_void;`n' ''
-          Replace-Exact 'src\windows\inventory.rs' 'use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};`n' ''
+          Replace-Exact 'src\windows\inventory.rs' "use std::ffi::c_void;`n" ''
+          Replace-Exact 'src\windows\inventory.rs' "use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};`n" ''
           Replace-Exact 'src\windows\inventory.rs' @'
         let mut cloaked = 0_u32;
         if DwmGetWindowAttribute(
