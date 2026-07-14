@@ -1,9 +1,7 @@
 use std::ffi::c_void;
 use std::mem::{size_of, zeroed};
 use std::path::Path;
-use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_SUCCESS, HANDLE, HLOCAL,
-};
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_SUCCESS, HANDLE, HLOCAL};
 use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows_sys::Win32::Security::{
     GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, OpenProcessToken,
