@@ -1,23 +1,24 @@
 name: Finalize DeskPilot 0.1.4
 
 on:
-  push:
-    branches:
-      - fix/direct-win-release-and-window-mapping
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches: [main]
     paths:
       - '.github/workflows/finalize-0.1.4.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   finalize:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: fix/direct-win-release-and-window-mapping
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Install declared Rust toolchain
@@ -64,32 +65,18 @@ jobs:
             throw "Unexpected version result: exit=$($process.ExitCode) stdout=[$stdout] stderr=[$stderr]"
           }
 
-      - name: Publish validated lockfile and CI
+      - name: Stage validated files
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          BRANCH: fix/direct-win-release-and-window-mapping
         run: |
-          $headers = @{
-            Authorization = "Bearer $env:GH_TOKEN"
-            Accept = 'application/vnd.github+json'
-            'X-GitHub-Api-Version' = '2022-11-28'
-          }
+          New-Item -ItemType Directory -Force finalized\.github\workflows | Out-Null
+          Copy-Item Cargo.lock finalized\Cargo.lock
+          Copy-Item .github\workflows\ci.yml finalized\.github\workflows\ci.yml
+          Copy-Item dist\DeskPilot-portable-0.1.4.zip finalized\DeskPilot-portable-0.1.4.zip
 
-          function Publish-File([string]$Path, [string]$Message) {
-            $encodedPath = ($Path -split '/' | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/'
-            $uri = "https://api.github.com/repos/$env:REPOSITORY/contents/$encodedPath"
-            $metadata = Invoke-RestMethod -Method Get -Uri "$uri?ref=$env:BRANCH" -Headers $headers
-            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $Path))
-            $payload = @{
-              message = $Message
-              content = [Convert]::ToBase64String($bytes)
-              sha = $metadata.sha
-              branch = $env:BRANCH
-            } | ConvertTo-Json
-            Invoke-RestMethod -Method Put -Uri $uri -Headers $headers -ContentType 'application/json' -Body $payload | Out-Null
-          }
-
-          Publish-File 'Cargo.lock' 'Update lockfile for DeskPilot 0.1.4'
-          Publish-File '.github/workflows/ci.yml' 'Validate DeskPilot 0.1.4 in CI'
+      - name: Upload validated files
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeskPilot-0.1.4-finalized
+          path: finalized/**
+          if-no-files-found: error
+          retention-days: 14
