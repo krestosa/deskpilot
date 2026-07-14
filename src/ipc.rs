@@ -143,8 +143,8 @@ pub fn send_request(request: &IpcRequest) -> Result<IpcResponse, String> {
         if handle == INVALID_HANDLE_VALUE {
             return Err(format!("opening DeskPilot IPC failed: {}", GetLastError()));
         }
-        let mut mode = PIPE_READMODE_MESSAGE;
-        let _ = SetNamedPipeHandleState(handle, &mut mode, std::ptr::null(), std::ptr::null());
+        let mode = PIPE_READMODE_MESSAGE;
+        let _ = SetNamedPipeHandleState(handle, &mode, std::ptr::null(), std::ptr::null());
         let payload = serde_json::to_vec(request).map_err(|error| error.to_string())?;
         write_message(handle, &payload)?;
         let response = read_message(handle)?;
@@ -279,7 +279,7 @@ fn create_server_pipe(name: &str) -> Result<HANDLE, String> {
                 GetLastError()
             ));
         }
-        let mut attributes = SECURITY_ATTRIBUTES {
+        let attributes = SECURITY_ATTRIBUTES {
             nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: descriptor,
             bInheritHandle: 0,
@@ -293,7 +293,7 @@ fn create_server_pipe(name: &str) -> Result<HANDLE, String> {
             MAX_MESSAGE as u32,
             MAX_MESSAGE as u32,
             IPC_TIMEOUT_MS,
-            &mut attributes,
+            &attributes,
         );
         LocalFree(descriptor);
         if pipe == INVALID_HANDLE_VALUE {
