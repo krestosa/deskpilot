@@ -39,8 +39,8 @@ pub enum WheelDirection {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum NavigationMode {
-    #[default]
     Clamp,
+    #[default]
     Wrap,
 }
 
@@ -95,7 +95,7 @@ impl Default for WheelConfig {
     fn default() -> Self {
         Self {
             direction: WheelDirection::Normal,
-            navigation: NavigationMode::Clamp,
+            navigation: NavigationMode::Wrap,
             threshold: 120,
             cooldown_ms: 180,
         }
