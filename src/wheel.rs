@@ -6,19 +6,10 @@ pub enum Step {
     Next,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct WheelState {
     accumulator: i32,
     last_step_ms: Option<u64>,
-}
-
-impl Default for WheelState {
-    fn default() -> Self {
-        Self {
-            accumulator: 0,
-            last_step_ms: None,
-        }
-    }
 }
 
 impl WheelState {
