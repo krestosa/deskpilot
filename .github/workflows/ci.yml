@@ -120,7 +120,7 @@ jobs:
 
           $version = Invoke-DeskPilotProcess -Name 'version' -Arguments @('--version')
           if ($version.ExitCode -ne 0) { throw "Version command failed: $($version.Stderr)" }
-          if ($version.Stdout -ne 'DeskPilot 0.1.6') { throw "Unexpected version output: [$($version.Stdout)]" }
+          if ($version.Stdout -ne 'DeskPilot 0.1.7') { throw "Unexpected version output: [$($version.Stdout)]" }
 
           $config = Invoke-DeskPilotProcess -Name 'config-validate' -Arguments @('config', 'validate', '.\deskpilot.example.toml')
           if ($config.ExitCode -ne 0) { throw "Config validation failed: $($config.Stderr)" }

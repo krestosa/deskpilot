@@ -1,7 +1,7 @@
 // File purpose: Enumerates top-level windows and classifies desktop occupancy conservatively.
 use crate::config::Config;
 use crate::reconciliation::{DesktopId, DesktopState, Occupancy};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::mem::{size_of, zeroed};
 use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, RECT};
@@ -21,17 +21,36 @@ use super::desktops::{DesktopInfo, WinvdBackend};
 use super::system::current_process_id;
 use super::util::from_wide;
 
+#[derive(Debug)]
+pub struct DesktopInventory {
+    pub states: Vec<DesktopState>,
+    pub windows: HashMap<DesktopId, HashSet<crate::reconciliation::WindowToken>>,
+}
+
 // Function purpose: Builds a fresh ordered desktop snapshot with current occupancy and empty-grace state.
 pub fn snapshot(
     backend: &WinvdBackend,
     config: &Config,
     grace: &HashMap<DesktopId, bool>,
 ) -> Result<Vec<DesktopState>, String> {
+    detailed_snapshot(backend, config, grace).map(|inventory| inventory.states)
+}
+
+// Function purpose: Builds desktop occupancy together with stable window tokens used to distinguish real application creation from switch-time shell noise.
+pub fn detailed_snapshot(
+    backend: &WinvdBackend,
+    config: &Config,
+    grace: &HashMap<DesktopId, bool>,
+) -> Result<DesktopInventory, String> {
     let desktops = backend.list()?;
     let current = backend.current()?;
     let mut occupancy: HashMap<DesktopId, Occupancy> = desktops
         .iter()
         .map(|desktop| (desktop.id.clone(), Occupancy::Empty))
+        .collect();
+    let mut windows: HashMap<DesktopId, HashSet<crate::reconciliation::WindowToken>> = desktops
+        .iter()
+        .map(|desktop| (desktop.id.clone(), HashSet::new()))
         .collect();
 
     for hwnd in enumerate_windows() {
@@ -67,11 +86,17 @@ pub fn snapshot(
         }
 
         if let Some(desktop) = locate_window_desktop(backend, &desktops, &current.id, hwnd) {
-            occupancy.insert(desktop, Occupancy::Occupied);
+            occupancy.insert(desktop.clone(), Occupancy::Occupied);
+            if window_is_visible_user_surface(hwnd) {
+                windows
+                    .entry(desktop)
+                    .or_default()
+                    .insert(hwnd as usize as crate::reconciliation::WindowToken);
+            }
         }
     }
 
-    Ok(desktops
+    let states = desktops
         .into_iter()
         .map(|desktop| DesktopState {
             current: desktop.id == current.id,
@@ -79,7 +104,8 @@ pub fn snapshot(
             occupancy: occupancy.remove(&desktop.id).unwrap_or(Occupancy::Empty),
             id: desktop.id,
         })
-        .collect())
+        .collect();
+    Ok(DesktopInventory { states, windows })
 }
 
 // Function purpose: Locates window desktop.
@@ -209,7 +235,7 @@ fn is_eligible_application_window(hwnd: HWND) -> bool {
         if ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) != 0 {
             return false;
         }
-        IsWindowVisible(hwnd) != 0 || window_is_cloaked(hwnd)
+        IsWindowVisible(hwnd) != 0 || window_is_shell_cloaked(hwnd)
     }
 }
 
@@ -224,18 +250,37 @@ fn is_foreground_application_window(hwnd: HWND) -> bool {
     }
 }
 
-// Function purpose: Performs the window is cloaked operation required by this module.
-fn window_is_cloaked(hwnd: HWND) -> bool {
+// Function purpose: Returns the complete DWM cloak-reason bitset or zero when the attribute cannot be read.
+fn window_cloak_flags(hwnd: HWND) -> u32 {
     unsafe {
         let mut cloaked = 0_u32;
-        DwmGetWindowAttribute(
+        if DwmGetWindowAttribute(
             hwnd,
             DWMWA_CLOAKED as u32,
             (&mut cloaked as *mut u32).cast::<c_void>(),
             size_of::<u32>() as u32,
         ) >= 0
-            && cloaked != 0
+        {
+            cloaked
+        } else {
+            0
+        }
     }
+}
+
+// Function purpose: Reports any DWM cloak reason for foreground and visibility validation.
+fn window_is_cloaked(hwnd: HWND) -> bool {
+    window_cloak_flags(hwnd) != 0
+}
+
+// Function purpose: Counts inactive application windows only when Windows shell virtual-desktop cloaking is present.
+fn window_is_shell_cloaked(hwnd: HWND) -> bool {
+    window_cloak_flags(hwnd) & 0x2 != 0
+}
+
+// Function purpose: Restricts spare-consumption evidence to an actually visible, non-cloaked user surface on the current desktop.
+fn window_is_visible_user_surface(hwnd: HWND) -> bool {
+    (unsafe { IsWindowVisible(hwnd) != 0 }) && !window_is_cloaked(hwnd)
 }
 
 // Function purpose: Performs the executable name operation required by this module.

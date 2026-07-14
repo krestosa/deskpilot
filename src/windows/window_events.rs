@@ -1,4 +1,4 @@
-// File purpose: Listens for native top-level window lifecycle events and signals reconciliation.
+// File purpose: Listens for native top-level window lifecycle events and reports stable window tokens for event-confirmed occupancy.
 use std::mem::zeroed;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
@@ -9,11 +9,31 @@ use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, PostThreadMessageW, TranslateMessage, CHILDID_SELF,
-    EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE, MSG, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
-    WINEVENT_SKIPOWNPROCESS, WM_QUIT,
+    EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE, EVENT_OBJECT_SHOW, MSG, OBJID_WINDOW,
+    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_QUIT,
 };
 
-static EVENT_SENDER: OnceLock<Sender<()>> = OnceLock::new();
+use crate::reconciliation::WindowToken;
+
+static EVENT_SENDER: OnceLock<Sender<WindowEvent>> = OnceLock::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowEvent {
+    token: WindowToken,
+    event: u32,
+}
+
+impl WindowEvent {
+    // Function purpose: Returns the stable native token used to correlate this event with a later desktop inventory snapshot.
+    pub fn token(self) -> WindowToken {
+        self.token
+    }
+
+    // Function purpose: Reports whether the event can represent a newly opened or newly shown user application window.
+    pub fn occupancy_gain(self) -> bool {
+        self.event == EVENT_OBJECT_CREATE || self.event == EVENT_OBJECT_SHOW
+    }
+}
 
 pub struct WindowEventController {
     thread_id: AtomicU32,
@@ -22,7 +42,7 @@ pub struct WindowEventController {
 
 impl WindowEventController {
     // Function purpose: Starts the component and returns the controller used to update or stop it.
-    pub fn start(sender: Sender<()>) -> Result<Self, String> {
+    pub fn start(sender: Sender<WindowEvent>) -> Result<Self, String> {
         EVENT_SENDER
             .set(sender)
             .map_err(|_| "window event sender already initialized".to_string())?;
@@ -88,10 +108,10 @@ fn run_loop(ready: Sender<Result<u32, String>>) -> Result<(), String> {
     Ok(())
 }
 
-// Function purpose: Filters native window lifecycle callbacks and signals the main reconciliation loop.
+// Function purpose: Filters native top-level window lifecycle callbacks and forwards the event plus a stable window token to the main loop.
 unsafe extern "system" fn window_event_proc(
     _hook: HWINEVENTHOOK,
-    _event: u32,
+    event: u32,
     hwnd: HWND,
     object_id: i32,
     child_id: i32,
@@ -100,7 +120,38 @@ unsafe extern "system" fn window_event_proc(
 ) {
     if hwnd != 0 && object_id == OBJID_WINDOW && child_id == CHILDID_SELF as i32 {
         if let Some(sender) = EVENT_SENDER.get() {
-            let _ = sender.send(());
+            let _ = sender.send(WindowEvent {
+                token: hwnd as usize as WindowToken,
+                event,
+            });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WindowEvent;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE, EVENT_OBJECT_SHOW,
+    };
+
+    // Function purpose: Verifies only create and show events can authorize consumption of the protected spare.
+    #[test]
+    fn occupancy_gain_requires_create_or_show() {
+        assert!(WindowEvent {
+            token: 1,
+            event: EVENT_OBJECT_CREATE,
+        }
+        .occupancy_gain());
+        assert!(WindowEvent {
+            token: 2,
+            event: EVENT_OBJECT_SHOW,
+        }
+        .occupancy_gain());
+        assert!(!WindowEvent {
+            token: 3,
+            event: EVENT_OBJECT_HIDE,
+        }
+        .occupancy_gain());
     }
 }
