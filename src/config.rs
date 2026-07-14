@@ -28,16 +28,18 @@ pub struct WheelConfig {
     pub cooldown_ms: u64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum WheelDirection {
+    #[default]
     Normal,
     Inverted,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum NavigationMode {
+    #[default]
     Clamp,
     Wrap,
 }
@@ -97,18 +99,6 @@ impl Default for WheelConfig {
             threshold: 120,
             cooldown_ms: 180,
         }
-    }
-}
-
-impl Default for WheelDirection {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
-
-impl Default for NavigationMode {
-    fn default() -> Self {
-        Self::Clamp
     }
 }
 
