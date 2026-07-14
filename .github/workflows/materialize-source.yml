@@ -30,13 +30,27 @@ jobs:
           fetch-depth: 0
           show-progress: false
       - name: Reconstruct source tree
+        id: reconstruct
         shell: bash
         run: |
-          set -euo pipefail
-          python3 .github/materialize.py
+          set -o pipefail
+          python3 .github/materialize.py > /tmp/materialize.log 2>&1
+          status=$?
+          cat /tmp/materialize.log
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
           rm -rf .deskpilot-bootstrap
           rm -f .github/materialize.py
           rm -f .github/workflows/materialize-source.yml
+      - name: Upload reconstruction diagnostics
+        if: always() && steps.reconstruct.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: materialize-diagnostics-${{ github.sha }}
+          path: /tmp/materialize.log
+          if-no-files-found: error
+          retention-days: 3
       - name: Commit materialized source
         shell: bash
         run: |
