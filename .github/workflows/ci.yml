@@ -75,26 +75,33 @@ jobs:
             Tee-Object -FilePath artifacts\build.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Version command
+      - name: Validate redirected CLI output
         shell: pwsh
         run: |
-          $exe = '.\target\x86_64-pc-windows-msvc\release\DeskPilot.exe'
-          $version = & $exe --version
-          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^DeskPilot 0\.1\.0$') {
-            throw "Unexpected version output: $version"
+          $exe = (Resolve-Path '.\target\x86_64-pc-windows-msvc\release\DeskPilot.exe').Path
+          function Invoke-DeskPilotCli {
+            param([string]$Name, [string[]]$Arguments)
+            $stdout = Join-Path $PWD "artifacts\$Name.stdout.txt"
+            $stderr = Join-Path $PWD "artifacts\$Name.stderr.txt"
+            $process = Start-Process -FilePath $exe -ArgumentList $Arguments -NoNewWindow -Wait -PassThru `
+              -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+            $output = if (Test-Path $stdout) { (Get-Content -Raw $stdout).Trim() } else { '' }
+            $errorOutput = if (Test-Path $stderr) { (Get-Content -Raw $stderr).Trim() } else { '' }
+            if ($process.ExitCode -ne 0) {
+              throw "DeskPilot $Name failed with exit code $($process.ExitCode): $errorOutput"
+            }
+            return $output
           }
 
-      - name: Validate example configuration
-        shell: pwsh
-        run: |
-          .\target\x86_64-pc-windows-msvc\release\DeskPilot.exe config validate .\deskpilot.example.toml
-          if ($LASTEXITCODE -ne 0) { throw 'Example configuration failed validation.' }
+          $version = Invoke-DeskPilotCli -Name 'version' -Arguments @('--version')
+          if ($version -notmatch '^DeskPilot 0\.1\.0$') { throw "Unexpected version output: $version" }
 
-      - name: Mock backend self-test
-        shell: pwsh
-        run: |
-          $result = .\target\x86_64-pc-windows-msvc\release\DeskPilot.exe self-test --backend mock --json | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or -not $result.passed) { throw 'Mock backend self-test failed.' }
+          $config = Invoke-DeskPilotCli -Name 'config-validate' -Arguments @('config', 'validate', '.\deskpilot.example.toml')
+          if ($config -notmatch '^valid:') { throw "Unexpected config validation output: $config" }
+
+          $selfTestText = Invoke-DeskPilotCli -Name 'self-test' -Arguments @('self-test', '--backend', 'mock', '--json')
+          $selfTest = $selfTestText | ConvertFrom-Json
+          if (-not $selfTest.passed -or $selfTest.backend -ne 'mock') { throw 'Mock backend self-test failed.' }
 
       - name: Verify exact license
         shell: pwsh
