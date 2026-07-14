@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Preserved the active empty desktop instead of automatically switching the user to an occupied desktop.
+- Prevented reconciliation from treating DWM-cloaked application windows on inactive desktops as absent.
+- Blocked removal when any residual non-pinned window or uncertain mapping remains associated with a desktop.
+- Changed internal-empty fallback to the trailing spare instead of the previous occupied desktop.
+- Made circular wrap navigation the default for Win+wheel.
+
 ## 0.1.1
 
 - Fixed Windows 11 version detection so manifest virtualization cannot report `6.2.9200` and incorrectly disable the virtual desktop backend.
