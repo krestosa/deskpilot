@@ -51,10 +51,35 @@ pub fn snapshot(
             continue;
         }
 
+        let executable = match executable_name(identity.process_id) {
+            Ok(executable) => executable,
+            Err(_) => {
+                mark_unmapped_candidate_unknown(
+                    &mut occupancy,
+                    &current.id,
+                    window_is_cloaked(hwnd),
+                );
+                continue;
+            }
+        };
+        if ignored_shell_executable(&executable)
+            || config
+                .windows
+                .ignore_executables
+                .iter()
+                .any(|value| value.eq_ignore_ascii_case(&executable))
+        {
+            continue;
+        }
+
         let desktop = match backend.desktop_for_window(hwnd) {
             Ok(desktop) => desktop,
             Err(_) => {
-                mark_empty_unknown(&mut occupancy);
+                mark_unmapped_candidate_unknown(
+                    &mut occupancy,
+                    &current.id,
+                    window_is_cloaked(hwnd),
+                );
                 continue;
             }
         };
@@ -68,24 +93,8 @@ pub fn snapshot(
                 occupancy.insert(desktop, Occupancy::Unknown);
                 continue;
             }
-            Ok(false) => {}
-        }
-
-        match executable_name(identity.process_id) {
-            Ok(executable) => {
-                if ignored_shell_executable(&executable)
-                    || config
-                        .windows
-                        .ignore_executables
-                        .iter()
-                        .any(|value| value.eq_ignore_ascii_case(&executable))
-                {
-                    continue;
-                }
+            Ok(false) => {
                 occupancy.insert(desktop, Occupancy::Occupied);
-            }
-            Err(_) => {
-                occupancy.insert(desktop, Occupancy::Unknown);
             }
         }
     }
@@ -236,8 +245,18 @@ fn executable_name(process_id: u32) -> Result<String, String> {
     }
 }
 
-fn mark_empty_unknown(occupancy: &mut HashMap<DesktopId, Occupancy>) {
-    for state in occupancy.values_mut() {
+fn mark_unmapped_candidate_unknown(
+    occupancy: &mut HashMap<DesktopId, Occupancy>,
+    current: &DesktopId,
+    cloaked: bool,
+) {
+    if cloaked {
+        for (desktop, state) in occupancy.iter_mut() {
+            if desktop != current && *state == Occupancy::Empty {
+                *state = Occupancy::Unknown;
+            }
+        }
+    } else if let Some(state) = occupancy.get_mut(current) {
         if *state == Occupancy::Empty {
             *state = Occupancy::Unknown;
         }
@@ -253,12 +272,21 @@ fn rect_covers(window: RECT, monitor: RECT) -> bool {
 
 fn ignored_shell_executable(executable: &str) -> bool {
     const EXECUTABLES: &[&str] = &[
+        "backgroundTaskHost.exe",
+        "ctfmon.exe",
         "LockApp.exe",
+        "RuntimeBroker.exe",
         "SearchHost.exe",
+        "SecurityHealthSystray.exe",
         "ShellExperienceHost.exe",
         "ShellHost.exe",
+        "sihost.exe",
         "StartMenuExperienceHost.exe",
+        "SystemSettingsBroker.exe",
+        "taskhostw.exe",
         "TextInputHost.exe",
+        "WidgetService.exe",
+        "Widgets.exe",
     ];
     EXECUTABLES
         .iter()
@@ -267,16 +295,27 @@ fn ignored_shell_executable(executable: &str) -> bool {
 
 fn ignored_class(class_name: &str) -> bool {
     const CLASSES: &[&str] = &[
-        "Shell_TrayWnd",
-        "Shell_SecondaryTrayWnd",
-        "Progman",
-        "WorkerW",
-        "Windows.UI.Core.CoreWindow",
-        "XamlExplorerHostIslandWindow",
-        "MultitaskingViewFrame",
         "ApplicationManager_DesktopShellWindow",
+        "ControlCenterWindow",
+        "EdgeUiInputTopWndClass",
+        "ForegroundStaging",
+        "MultitaskingViewFrame",
+        "NotifyIconOverflowWindow",
+        "Progman",
         "SearchHost",
+        "Shell_InputSwitchTopLevelWindow",
+        "Shell_SecondaryTrayWnd",
+        "Shell_TrayWnd",
         "StartMenuExperienceHost",
+        "SystemTray_Main",
+        "SystemTray_Secondary",
+        "TopLevelWindowForOverflowXamlIsland",
+        "Windows.UI.Composition.DesktopWindowContentBridge",
+        "Windows.UI.Core.CoreWindow",
+        "Windows.UI.Input.InputSite.WindowClass",
+        "WorkerW",
+        "XamlExplorerHostIslandWindow",
+        "Xaml_WindowedPopupClass",
     ];
     CLASSES
         .iter()
@@ -285,16 +324,48 @@ fn ignored_class(class_name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ignored_class, ignored_shell_executable, rect_covers};
+    use super::{
+        ignored_class, ignored_shell_executable, mark_unmapped_candidate_unknown, rect_covers,
+    };
+    use crate::reconciliation::{DesktopId, Occupancy};
+    use std::collections::HashMap;
     use windows_sys::Win32::Foundation::RECT;
 
     #[test]
     fn shell_surfaces_are_not_user_applications() {
         assert!(ignored_class("Progman"));
         assert!(ignored_class("WorkerW"));
+        assert!(ignored_class("Windows.UI.Input.InputSite.WindowClass"));
         assert!(ignored_shell_executable("StartMenuExperienceHost.exe"));
         assert!(ignored_shell_executable("searchhost.EXE"));
+        assert!(ignored_shell_executable("RuntimeBroker.exe"));
         assert!(!ignored_shell_executable("notepad.exe"));
+    }
+
+    #[test]
+    fn visible_unmapped_candidate_only_blocks_current_desktop() {
+        let current = DesktopId("current".to_string());
+        let other = DesktopId("other".to_string());
+        let mut occupancy = HashMap::from([
+            (current.clone(), Occupancy::Empty),
+            (other.clone(), Occupancy::Empty),
+        ]);
+        mark_unmapped_candidate_unknown(&mut occupancy, &current, false);
+        assert_eq!(occupancy[&current], Occupancy::Unknown);
+        assert_eq!(occupancy[&other], Occupancy::Empty);
+    }
+
+    #[test]
+    fn cloaked_unmapped_candidate_only_blocks_non_current_desktops() {
+        let current = DesktopId("current".to_string());
+        let other = DesktopId("other".to_string());
+        let mut occupancy = HashMap::from([
+            (current.clone(), Occupancy::Empty),
+            (other.clone(), Occupancy::Empty),
+        ]);
+        mark_unmapped_candidate_unknown(&mut occupancy, &current, true);
+        assert_eq!(occupancy[&current], Occupancy::Empty);
+        assert_eq!(occupancy[&other], Occupancy::Unknown);
     }
 
     #[test]

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3
+
+- Held a neutral `F24` chord from a consumed Win+wheel gesture until after the physical Windows-key release, preventing Start from treating the gesture as a standalone Win press.
+- Added a low-level keyboard hook beside the mouse hook to track left and right Windows-key state and release the suppressor deterministically.
+- Filtered shell and helper processes before attempting virtual-desktop mapping.
+- Prevented one unmappable shell window from converting every empty desktop to `unknown`.
+- Expanded exclusions for Start, input, tray, control-center, widget and broker surfaces.
+- Added a regression test proving several trailing empty desktops converge to exactly one while preserving the active desktop.
+
 ## 0.1.2
 
 - Prevented shell, desktop and Start surfaces from being misclassified as exclusive fullscreen applications and suspending Win+wheel navigation.

@@ -41,17 +41,23 @@ To keep state elsewhere:
 
 ## Dynamic desktop behavior
 
-DeskPilot classifies every desktop as occupied, empty or unknown from eligible top-level application windows. It does not count invisible, cloaked, auxiliary, shell, excluded or pinned windows. If inspection is ambiguous, it chooses `unknown` and will not remove the desktop.
+DeskPilot classifies every desktop as occupied, empty or unknown from plausible top-level application windows. DWM-cloaked application windows on inactive virtual desktops still count as occupied. Owned, tool, no-activate, shell, excluded and pinned windows do not count. Ambiguous inspection produces `unknown`, which prevents destructive removal of the affected desktop.
 
 After stabilization:
 
 ```text
 one known-empty desktop exists at the end
-no known-empty desktop exists between occupied desktops
+no known-empty desktop exists between occupied desktops, except the active desktop
 no user window is moved or closed by reconciliation
 ```
 
-When the final spare becomes occupied, a new spare is created. When an internal desktop becomes empty, DeskPilot waits `empty_grace_ms`, confirms it again, switches away first if necessary, and removes only that desktop with a safe fallback. Every mutation is followed by a fresh read and the cycle is bounded.
+When the final spare becomes occupied, a new spare is created. When a non-current desktop becomes empty, DeskPilot waits `empty_grace_ms`, confirms it again and removes it using the known trailing spare as fallback. Duplicate trailing empty desktops are removed one at a time from fresh snapshots. The active desktop is never automatically switched or removed.
+
+## Input behavior
+
+The mouse and keyboard hooks only classify input and enqueue navigation. After DeskPilot consumes Win+wheel, version 0.1.3 holds a neutral `F24` key until the physical left or right Windows key is released, then releases `F24` from the hook thread. This keeps the complete Windows-key press classified as a chord and prevents Start from opening when Win is released.
+
+Navigation uses circular `wrap` mode by default: moving past the final desktop selects the first, and moving before the first selects the final desktop. `clamp` remains configurable.
 
 ## Tray menu
 
@@ -79,7 +85,7 @@ enabled = true
 
 [wheel]
 direction = "normal"
-navigation = "clamp"
+navigation = "wrap"
 threshold = 120
 cooldown_ms = 180
 
@@ -140,11 +146,11 @@ Example:
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.1.3",
   "enabled": true,
   "dynamic": true,
   "direction": "normal",
-  "navigation": "clamp",
+  "navigation": "wrap",
   "backend_compatible": true
 }
 ```
@@ -191,7 +197,7 @@ The release manifest uses `requestedExecutionLevel="asInvoker"`. The package con
 
 ## Validation
 
-Hosted Windows CI proves formatting, linting, deterministic tests, release compilation, local CLI behavior, exact license bytes and portable packaging. Real Win+wheel, Explorer integration and desktop lifecycle require a dedicated interactive Windows 11 session; the separate self-hosted workflow never represents a non-interactive probe as a successful interactive test.
+Hosted Windows CI proves formatting, linting, deterministic state-machine tests, release compilation, local CLI behavior, exact license bytes and portable packaging. Real keyboard timing, Explorer integration and virtual-desktop lifecycle are additionally exercised by the dedicated interactive Windows workflow; hosted non-interactive checks are not represented as physical input proof.
 
 See:
 
