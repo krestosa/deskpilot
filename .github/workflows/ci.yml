@@ -157,11 +157,12 @@ jobs:
           $unexpected = Get-ChildItem -Recurse -File dist\DeskPilot | Where-Object Extension -in @('.pdb', '.tmp')
           if ($unexpected) { throw "Unexpected package files: $($unexpected.FullName -join ', ')" }
           Get-ChildItem dist\DeskPilot -File | Where-Object Name -ne 'checksums.sha256' | ForEach-Object {
-            $line = Get-Content dist\DeskPilot\checksums.sha256 | Where-Object { $_ -match "  $([regex]::Escape($_.Name))$" }
-            if (-not $line) { throw "Missing checksum for $($_.Name)" }
+            $file = $_
+            $line = Get-Content dist\DeskPilot\checksums.sha256 | Where-Object { $_ -match "^[0-9a-f]{64}  $([regex]::Escape($file.Name))$" }
+            if (-not $line) { throw "Missing checksum for $($file.Name)" }
             $expected = ($line -split '\s+')[0]
-            $actual = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant()
-            if ($actual -ne $expected) { throw "Checksum mismatch for $($_.Name)" }
+            $actual = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) { throw "Checksum mismatch for $($file.Name)" }
           }
 
       - name: Capture CI metadata
