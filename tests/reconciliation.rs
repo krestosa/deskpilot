@@ -58,11 +58,7 @@ fn duplicate_trailing_empty_is_removed() {
 
 #[test]
 fn active_last_trailing_empty_is_preserved() {
-    let mut snapshot = states(&[
-        Occupancy::Occupied,
-        Occupancy::Empty,
-        Occupancy::Empty,
-    ]);
+    let mut snapshot = states(&[Occupancy::Occupied, Occupancy::Empty, Occupancy::Empty]);
     set_current(&mut snapshot, 2);
     let result = plan(&snapshot);
     assert_eq!(
@@ -76,11 +72,7 @@ fn active_last_trailing_empty_is_preserved() {
 
 #[test]
 fn active_first_trailing_empty_is_preserved() {
-    let mut snapshot = states(&[
-        Occupancy::Occupied,
-        Occupancy::Empty,
-        Occupancy::Empty,
-    ]);
+    let mut snapshot = states(&[Occupancy::Occupied, Occupancy::Empty, Occupancy::Empty]);
     set_current(&mut snapshot, 1);
     let result = plan(&snapshot);
     assert_eq!(
@@ -188,6 +180,14 @@ impl ReconcileBackend for FakeBackend {
         });
         self.operations.push("create".to_string());
         Ok(id)
+    }
+
+    fn switch_desktop(&mut self, desktop: &DesktopId) -> Result<(), String> {
+        for state in &mut self.desktops {
+            state.current = &state.id == desktop;
+        }
+        self.operations.push(format!("switch:{}", desktop.0));
+        Ok(())
     }
 
     fn remove_desktop(&mut self, desktop: &DesktopId, _fallback: &DesktopId) -> Result<(), String> {
