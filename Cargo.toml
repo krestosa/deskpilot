@@ -26,7 +26,7 @@ windows = { version = "0.58", features = [
   "Win32_System_Ole",
   "Win32_UI_Shell",
 ] }
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.52", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",
