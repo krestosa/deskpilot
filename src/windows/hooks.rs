@@ -17,8 +17,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
     TranslateMessage, UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT,
-    WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_MOUSEWHEEL, WM_QUIT, WM_SYSKEYDOWN,
-    WM_SYSKEYUP,
+    WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_MOUSEHWHEEL, WM_MOUSEWHEEL, WM_QUIT,
+    WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
 const SUPPRESSION_MARKER: usize = 0x4450_5752;
@@ -181,9 +181,10 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
     unsafe { CallNextHookEx(0 as HHOOK, code, wparam, lparam) }
 }
 
-// Function purpose: Handles low-level wheel events, recognizes Win+wheel steps, queues navigation, and consumes handled input.
+// Function purpose: Consumes every vertical or horizontal scroll message during an active Win gesture and queues vertical navigation steps asynchronously.
 unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code == HC_ACTION as i32 && wparam as u32 == WM_MOUSEWHEEL {
+    let message = wparam as u32;
+    if code == HC_ACTION as i32 && is_scroll_message(message) {
         if let Some(context) = CONTEXT.get() {
             let active = context.enabled.load(Ordering::Acquire)
                 && context.backend_ready.load(Ordering::Acquire)
@@ -193,28 +194,36 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                 return unsafe { CallNextHookEx(0 as HHOOK, code, wparam, lparam) };
             }
 
-            let event = unsafe { &*(lparam as *const MSLLHOOKSTRUCT) };
-            let delta = ((event.mouseData >> 16) as u16) as i16 as i32;
-            let config = context.config.read().ok().map(|value| value.wheel.clone());
-            if let Some(config) = config {
-                if let Ok(mut wheel) = context.wheel.try_lock() {
-                    if let Some(step) = wheel.feed(
-                        delta,
-                        unsafe { GetTickCount64() },
-                        config.threshold,
-                        config.cooldown_ms,
-                        config.direction,
-                    ) {
-                        if context.navigation.send(step).is_ok() {
-                            context.consumed_win_chord.store(true, Ordering::Release);
-                            return 1;
+            context.consumed_win_chord.store(true, Ordering::Release);
+            if message == WM_MOUSEWHEEL {
+                let event = unsafe { &*(lparam as *const MSLLHOOKSTRUCT) };
+                let delta = ((event.mouseData >> 16) as u16) as i16 as i32;
+                let config = context.config.read().ok().map(|value| value.wheel.clone());
+                if let Some(config) = config {
+                    if let Ok(mut wheel) = context.wheel.try_lock() {
+                        let gesture = wheel.gesture(
+                            true,
+                            delta,
+                            unsafe { GetTickCount64() },
+                            config.threshold,
+                            config.cooldown_ms,
+                            config.direction,
+                        );
+                        if let Some(step) = gesture.step {
+                            let _ = context.navigation.send(step);
                         }
                     }
                 }
             }
+            return 1;
         }
     }
     unsafe { CallNextHookEx(0 as HHOOK, code, wparam, lparam) }
+}
+
+// Function purpose: Identifies all mouse-wheel messages that must be blocked from the application beneath the pointer during a Win gesture.
+fn is_scroll_message(message: u32) -> bool {
+    message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL
 }
 
 // Function purpose: Resets wheel.
@@ -273,8 +282,17 @@ fn keyboard_input(key: u16, key_up: bool) -> INPUT {
 
 #[cfg(test)]
 mod tests {
-    use super::suppressed_win_release_inputs;
+    use super::{is_scroll_message, suppressed_win_release_inputs};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{KEYEVENTF_KEYUP, VK_CONTROL, VK_LWIN};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{WM_MOUSEHWHEEL, WM_MOUSEWHEEL};
+
+    // Function purpose: Verifies that both vertical and horizontal wheel messages are classified as scroll that must be captured.
+    #[test]
+    fn captures_vertical_and_horizontal_scroll_messages() {
+        assert!(is_scroll_message(WM_MOUSEWHEEL));
+        assert!(is_scroll_message(WM_MOUSEHWHEEL));
+        assert!(!is_scroll_message(0));
+    }
 
     // Function purpose: Verifies the start suppression replaces physical win up with control chord scenario and its expected safety or state invariant.
     #[test]

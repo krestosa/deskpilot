@@ -1,10 +1,16 @@
-// File purpose: Normalizes wheel deltas, applies thresholds and cooldowns, and calculates wrapped navigation targets.
+// File purpose: Normalizes wheel deltas, captures Win-modified scroll, applies thresholds and cooldowns, and calculates wrapped targets.
 use crate::config::{NavigationMode, WheelDirection};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
     Previous,
     Next,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WheelGesture {
+    pub consume: bool,
+    pub step: Option<Step>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -14,7 +20,30 @@ pub struct WheelState {
 }
 
 impl WheelState {
-    // Function purpose: Performs the feed operation required by this module.
+    // Function purpose: Captures every active Win-modified wheel message while emitting navigation only after threshold and cooldown rules pass.
+    pub fn gesture(
+        &mut self,
+        modifier_active: bool,
+        delta: i32,
+        now_ms: u64,
+        threshold: i32,
+        cooldown_ms: u64,
+        direction: WheelDirection,
+    ) -> WheelGesture {
+        if !modifier_active {
+            self.reset();
+            return WheelGesture {
+                consume: false,
+                step: None,
+            };
+        }
+        WheelGesture {
+            consume: true,
+            step: self.feed(delta, now_ms, threshold, cooldown_ms, direction),
+        }
+    }
+
+    // Function purpose: Accumulates high-resolution deltas and emits one normalized navigation step when permitted.
     pub fn feed(
         &mut self,
         delta: i32,
@@ -46,13 +75,13 @@ impl WheelState {
         })
     }
 
-    // Function purpose: Performs the reset operation required by this module.
+    // Function purpose: Discards partial wheel movement when the Win gesture is inactive or suspended.
     pub fn reset(&mut self) {
         self.accumulator = 0;
     }
 }
 
-// Function purpose: Performs the target index operation required by this module.
+// Function purpose: Calculates the destination index for clamped or circular desktop navigation.
 pub fn target_index(
     current: usize,
     count: usize,

@@ -214,3 +214,8 @@ DeskPilot makes no runtime network requests and contains no telemetry. It does n
 ## License
 
 DeskPilot is licensed under PolyForm Strict License 1.0.0. `LICENSE.md` is the byte-identical official license text verified by SHA-256 in CI. Third-party notices are in `THIRD_PARTY_NOTICES.md`.
+
+
+## Input isolation
+
+While DeskPilot is active and either Windows key is held, all vertical and horizontal wheel messages are consumed by the low-level hook. Partial high-resolution deltas and events suppressed by the navigation cooldown never reach the application beneath the pointer. Wheel input behaves normally whenever the Windows key is not part of the gesture.
