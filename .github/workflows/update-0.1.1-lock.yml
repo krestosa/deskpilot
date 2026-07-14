@@ -1,0 +1,37 @@
+name: Update DeskPilot 0.1.1 lockfile
+
+on:
+  push:
+    branches:
+      - fix/windows-version-detection
+    paths:
+      - '.github/workflows/update-0.1.1-lock.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/windows-version-detection
+          fetch-depth: 0
+      - name: Update root package version in lockfile
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal --target x86_64-pc-windows-msvc
+          cargo check --target x86_64-pc-windows-msvc
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
+      - name: Publish lockfile and remove this workflow
+        shell: pwsh
+        run: |
+          Remove-Item .github\workflows\update-0.1.1-lock.yml -Force
+          git add Cargo.lock .github\workflows\update-0.1.1-lock.yml
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Update lockfile for DeskPilot 0.1.1'
+          git push origin HEAD:fix/windows-version-detection
