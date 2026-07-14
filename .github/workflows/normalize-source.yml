@@ -6,6 +6,12 @@ on:
       - feature/portable-dynamic-desktop-manager
     paths:
       - .github/workflows/normalize-source.yml
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches:
+      - main
+    paths:
+      - .github/workflows/normalize-source.yml
   workflow_dispatch:
 
 permissions:
