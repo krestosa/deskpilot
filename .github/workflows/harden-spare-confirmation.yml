@@ -1,4 +1,4 @@
-# File purpose: Temporarily applies and validates persistent visible-window confirmation for the trailing spare.
+# File purpose: Temporarily applies, diagnoses, and validates persistent visible-window confirmation for the trailing spare.
 name: Harden spare confirmation
 
 on:
@@ -46,7 +46,28 @@ jobs:
 
       - name: Run Clippy
         shell: pwsh
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: |
+          New-Item -ItemType Directory -Force diagnostics | Out-Null
+          cargo clippy --workspace --all-targets --locked -- -D warnings 2>&1 |
+            Tee-Object -FilePath diagnostics\clippy.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Capture failed generated source
+        if: failure()
+        shell: pwsh
+        run: |
+          Copy-Item src\reconciliation\spare_guard.rs diagnostics\spare_guard.rs
+          Copy-Item src\windows\inventory.rs diagnostics\inventory.rs
+          Copy-Item src\app.rs diagnostics\app.rs
+          Copy-Item tests\spare_guard.rs diagnostics\spare_guard_tests.rs
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spare-confirmation-diagnostics-${{ github.event.pull_request.head.sha }}
+          path: diagnostics/**
+          if-no-files-found: error
 
       - name: Run tests
         shell: pwsh
