@@ -29,7 +29,9 @@ jobs:
 
       - name: Apply explicit patch
         shell: pwsh
-        run: python tools/apply_final_fix.py
+        run: |
+          python tools/apply_final_fix.py
+          python tools/fix_final_integration.py
 
       - name: Format generated Rust
         shell: pwsh
@@ -55,6 +57,7 @@ jobs:
           Copy-Item src\wheel.rs diagnostics\wheel.rs
           Copy-Item src\windows\hooks.rs diagnostics\hooks.rs
           Copy-Item src\reconciliation\engine.rs diagnostics\engine.rs
+          Copy-Item src\reconciliation\mod.rs diagnostics\reconciliation-mod.rs
           Copy-Item tests\virtual_reconciliation.rs diagnostics\virtual_reconciliation.rs
 
       - name: Upload failure diagnostics
@@ -88,6 +91,7 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
           git rm tools/apply_final_fix.py
+          git rm tools/fix_final_integration.py
           git rm .github/workflows/run-explicit-final-fix.yml
           git commit -m "Serialize reconciliation and capture Win scroll"
           git push origin HEAD:fix/final-reconciliation-fence
