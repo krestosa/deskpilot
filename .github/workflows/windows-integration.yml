@@ -21,8 +21,10 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout
+      - name: Checkout exact dispatched SHA
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: Verify interactive Windows 11 session
         shell: pwsh
@@ -40,13 +42,15 @@ jobs:
           rustup default stable
           rustup target add $env:TARGET
 
-      - name: Ensure lockfile
+      - name: Verify committed lockfile
         shell: pwsh
         run: |
-          if (-not (Test-Path Cargo.lock)) { cargo generate-lockfile }
+          if (-not (Test-Path Cargo.lock -PathType Leaf)) { throw 'Cargo.lock is not committed.' }
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
 
       - name: Build release
-        run: cargo build --release --locked --target ${{ env.TARGET }}
+        shell: pwsh
+        run: cargo build --release --locked --target $env:TARGET
 
       - name: Run isolated interactive smoke
         shell: pwsh
