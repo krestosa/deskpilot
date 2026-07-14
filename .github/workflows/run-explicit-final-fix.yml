@@ -1,4 +1,4 @@
-# File purpose: Temporarily applies, formats, and validates the explicit final reconciliation patch script.
+# File purpose: Temporarily applies, formats, diagnoses, and validates the explicit final reconciliation patch script.
 name: Run explicit final reconciliation fix
 
 on:
@@ -41,7 +41,29 @@ jobs:
 
       - name: Run Clippy
         shell: pwsh
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: |
+          New-Item -ItemType Directory -Force diagnostics | Out-Null
+          cargo clippy --workspace --all-targets --locked -- -D warnings 2>&1 |
+            Tee-Object -FilePath diagnostics\clippy.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Capture failed generated tree
+        if: failure()
+        shell: pwsh
+        run: |
+          Copy-Item src\app.rs diagnostics\app.rs
+          Copy-Item src\wheel.rs diagnostics\wheel.rs
+          Copy-Item src\windows\hooks.rs diagnostics\hooks.rs
+          Copy-Item src\reconciliation\engine.rs diagnostics\engine.rs
+          Copy-Item tests\virtual_reconciliation.rs diagnostics\virtual_reconciliation.rs
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-reconciliation-clippy-diagnostics-${{ github.event.pull_request.head.sha }}
+          path: diagnostics/**
+          if-no-files-found: error
 
       - name: Run tests
         shell: pwsh
