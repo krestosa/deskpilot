@@ -254,7 +254,7 @@ unsafe extern "system" fn window_proc(
         }
         WM_DESTROY => {
             delete_icon(hwnd);
-            PostQuitMessage(0);
+            unsafe { PostQuitMessage(0) };
             0
         }
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
@@ -327,7 +327,7 @@ fn show_menu(hwnd: HWND) {
         append(menu, CMD_OPEN_LOGS, "Open logs");
         AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
         append(menu, CMD_EXIT, "Exit");
-        let mut point = POINT::default();
+        let mut point: POINT = zeroed();
         GetCursorPos(&mut point);
         SetForegroundWindow(hwnd);
         TrackPopupMenu(
