@@ -1,0 +1,188 @@
+name: Refine function comments
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deskpilot-refine-function-comments
+  cancel-in-progress: false
+
+jobs:
+  refine:
+    if: github.head_ref == 'docs/comment-all-functions'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: docs/comment-all-functions
+          fetch-depth: 0
+
+      - name: Install Rust 1.85
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal --component rustfmt --component clippy --target x86_64-pc-windows-msvc
+          rustup default 1.85.0
+
+      - name: Reclassify and rewrite Rust function comments
+        shell: pwsh
+        run: |
+          @'
+          from __future__ import annotations
+
+          import re
+          from pathlib import Path
+
+          RUST_FN = re.compile(
+              r'^(?P<indent>\s*)(?:(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?(?:async\s+)?(?:const\s+)?(?:extern\s+"[^"]+"\s+)?fn\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b)'
+          )
+
+          EXACT = {
+              'main': 'Starts DeskPilot, parses the invocation, dispatches the selected command, and exits with its result code.',
+              'run': 'Starts the module runtime, owns its event loop, and releases all native resources during orderly shutdown.',
+              'plan': 'Computes the next safe desktop mutation required to restore the dynamic desktop invariant.',
+              'apply_plan': 'Repeatedly snapshots and mutates a backend until reconciliation is stable or a safety bound is reached.',
+              'snapshot': 'Builds a fresh ordered desktop snapshot with current occupancy and empty-grace state.',
+              'reconcile': 'Runs bounded desktop reconciliation and records or publishes the outcome.',
+              'navigate': 'Switches to the relative desktop selected by the normalized wheel step and configured navigation mode.',
+              'doctor': 'Builds the structured diagnostic report without exposing window titles or document contents.',
+              'schedule_reconcile_at_earliest': 'Keeps the earliest pending reconciliation deadline so later events cannot postpone required work.',
+              'config_read': 'Returns a consistent configuration snapshot and falls back to safe defaults if the shared lock is poisoned.',
+              'create_support_bundle': 'Writes a redacted local support archive with diagnostics, bounded logs, a manifest, and checksums.',
+              'sha256_hex': 'Computes the lowercase SHA-256 digest of the supplied bytes without an external crypto dependency.',
+              'timestamp_utc': 'Returns the current UTC timestamp in the format used by logs, events, and reports.',
+              'keyboard_proc': 'Handles low-level keyboard events, tracks physical Windows keys, and suppresses the final Win release after a consumed gesture.',
+              'mouse_proc': 'Handles low-level wheel events, recognizes Win+wheel steps, queues navigation, and consumes handled input.',
+              'window_event_proc': 'Filters native window lifecycle callbacks and signals the main reconciliation loop.',
+              'tray_window_proc': 'Handles native tray-window messages, menu commands, Explorer restart notifications, and shutdown.',
+              'drop': 'Releases the native or background resource owned by this value when it leaves scope.',
+              'default': 'Constructs the documented safe default value for this type.',
+              'new': 'Constructs a new initialized value for this type.',
+              'start': 'Starts the component and returns the controller used to update or stop it.',
+              'stop': 'Stops the component, signals its worker thread, and waits for native resources to be released.',
+          }
+
+          def humanize(name: str) -> str:
+              return ' '.join(part for part in name.strip('_').replace('-', '_').split('_') if part) or name
+
+          def sentence(text: str) -> str:
+              text = text.strip()
+              return text[0].upper() + text[1:].rstrip('.') + '.'
+
+          def purpose(name: str, is_test: bool, native: bool) -> str:
+              if is_test:
+                  return sentence(f'Verifies the {humanize(name)} scenario and its expected safety or state invariant')
+              if name in EXACT:
+                  return EXACT[name]
+              phrase = humanize(name)
+              if native or name.endswith('_proc') or name.endswith('_callback') or name == 'callback':
+                  return sentence(f'Handles the native {phrase} callback and forwards only the relevant event')
+              prefixes = [
+                  ('is_', 'Returns whether '), ('has_', 'Returns whether '), ('can_', 'Returns whether '),
+                  ('get_', 'Retrieves '), ('read_', 'Reads '), ('load_', 'Loads '), ('parse_', 'Parses '),
+                  ('validate_', 'Validates '), ('verify_', 'Verifies '), ('write_', 'Writes '), ('save_', 'Persists '),
+                  ('create_', 'Creates '), ('build_', 'Builds '), ('remove_', 'Removes '), ('delete_', 'Deletes '),
+                  ('open_', 'Opens '), ('close_', 'Closes '), ('switch_', 'Switches '), ('update_', 'Updates '),
+                  ('set_', 'Updates '), ('handle_', 'Handles '), ('process_', 'Processes '), ('send_', 'Sends '),
+                  ('publish_', 'Publishes '), ('format_', 'Formats '), ('redact_', 'Redacts '), ('resolve_', 'Resolves '),
+                  ('find_', 'Finds '), ('locate_', 'Locates '), ('enumerate_', 'Enumerates '), ('collect_', 'Collects '),
+                  ('install_', 'Installs '), ('uninstall_', 'Removes '), ('attach_', 'Attaches '), ('reset_', 'Resets '),
+              ]
+              for prefix, verb in prefixes:
+                  if name.startswith(prefix):
+                      return sentence(verb + humanize(name[len(prefix):]))
+              return sentence(f'Performs the {phrase} operation required by this module')
+
+          def test_ranges(lines: list[str]) -> list[tuple[int, int]]:
+              ranges = []
+              pending = False
+              for index, line in enumerate(lines):
+                  stripped = line.strip()
+                  if stripped == '#[cfg(test)]':
+                      pending = True
+                      continue
+                  if pending and stripped.startswith('#['):
+                      continue
+                  if pending:
+                      if re.match(r'(?:pub\s+)?mod\s+[A-Za-z_][A-Za-z0-9_]*\s*\{', stripped):
+                          depth = line.count('{') - line.count('}')
+                          end = index
+                          while depth > 0 and end + 1 < len(lines):
+                              end += 1
+                              depth += lines[end].count('{') - lines[end].count('}')
+                          ranges.append((index, end))
+                      pending = False
+              return ranges
+
+          changed_files = 0
+          production_verify_comments = []
+          for path in sorted(Path('src').rglob('*.rs')) + sorted(Path('tests').rglob('*.rs')) + [Path('build.rs')]:
+              if not path.exists():
+                  continue
+              text = path.read_text(encoding='utf-8')
+              lines = text.splitlines()
+              ranges = test_ranges(lines)
+              changed = False
+              for index, line in enumerate(lines):
+                  match = RUST_FN.match(line)
+                  if not match:
+                      continue
+                  start = index
+                  cursor = index - 1
+                  attrs = []
+                  while cursor >= 0 and lines[cursor].lstrip().startswith('#['):
+                      attrs.append(lines[cursor].strip())
+                      start = cursor
+                      cursor -= 1
+                  if cursor < 0 or not lines[cursor].strip().startswith('// Function purpose:'):
+                      raise RuntimeError(f'{path}:{index + 1}: missing function-purpose comment')
+                  is_test = path.parts[0] == 'tests' or '#[test]' in attrs or any(begin <= index <= end for begin, end in ranges)
+                  description = purpose(match.group('name'), is_test, 'extern "system"' in line)
+                  replacement = f"{re.match(r'^\s*', lines[cursor]).group(0)}// Function purpose: {description}"
+                  if lines[cursor] != replacement:
+                      lines[cursor] = replacement
+                      changed = True
+                  if not is_test and description.startswith('Verifies the '):
+                      production_verify_comments.append(f'{path}:{index + 1}:{match.group("name")}')
+              if changed:
+                  path.write_text('\n'.join(lines) + ('\n' if text.endswith('\n') else ''), encoding='utf-8', newline='\n')
+                  changed_files += 1
+
+          if production_verify_comments:
+              raise RuntimeError('Production functions classified as tests: ' + ', '.join(production_verify_comments))
+          print(f'Refined comments in {changed_files} Rust files.')
+          '@ | Set-Content -Encoding utf8NoBOM .\refine_comments.py
+
+          python .\refine_comments.py
+          Remove-Item .\refine_comments.py -Force
+          cargo fmt --all
+
+      - name: Validate refined tree
+        shell: pwsh
+        run: |
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+          cargo build --release --locked --target x86_64-pc-windows-msvc
+          .\scripts\verify-license.ps1
+          .\scripts\build-portable.ps1 -SkipBuild
+
+      - name: Publish changes when present
+        shell: pwsh
+        run: |
+          git diff --check
+          if (-not (git status --porcelain)) {
+            Write-Host 'Function comments are already classified correctly.'
+            exit 0
+          }
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Distinguish production and test function comments'
+          git push origin HEAD:docs/comment-all-functions
