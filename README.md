@@ -168,14 +168,15 @@ It does not follow symlinks and does not include memory, window contents or unre
 
 Requirements:
 
-- current stable Rust with `x86_64-pc-windows-msvc`;
+- Rust 1.85.0, selected automatically by the committed `rust-toolchain.toml`;
 - Visual Studio 2022 Build Tools with MSVC v143;
 - Windows 11 SDK;
 - PowerShell 7 or Windows PowerShell 5.1.
 
+`Cargo.lock` is committed and is part of the reproducible build. Do not run `cargo generate-lockfile` for a normal checkout build. Pull the current branch and use the locked dependency graph:
+
 ```powershell
 rustup target add x86_64-pc-windows-msvc
-cargo generate-lockfile
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
@@ -183,6 +184,8 @@ cargo build --release --locked --target x86_64-pc-windows-msvc
 .\scripts\verify-license.ps1
 .\scripts\build-portable.ps1
 ```
+
+Dependency-maintenance changes must regenerate and commit `Cargo.lock` under Rust 1.85.0. The direct `time` dependency is fixed to `0.3.45` because newer releases require a newer compiler than DeskPilot's declared MSRV.
 
 The release manifest uses `requestedExecutionLevel="asInvoker"`. The package contains no PDB, installer or runtime download.
 
