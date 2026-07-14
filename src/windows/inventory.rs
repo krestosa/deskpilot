@@ -1,8 +1,10 @@
 use crate::config::Config;
 use crate::reconciliation::{DesktopId, DesktopState, Occupancy};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::ffi::c_void;
 use std::mem::{size_of, zeroed};
 use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, RECT};
+use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
@@ -29,7 +31,6 @@ pub fn snapshot(
         .iter()
         .map(|desktop| (desktop.id.clone(), Occupancy::Empty))
         .collect();
-    let mut removal_blocked = HashSet::new();
 
     for hwnd in enumerate_windows() {
         let Some(identity) = inspect_identity(hwnd) else {
@@ -38,15 +39,22 @@ pub fn snapshot(
         if identity.process_id == current_process_id() || ignored_class(&identity.class_name) {
             continue;
         }
+        if !is_eligible_application_window(hwnd) {
+            continue;
+        }
+        if config
+            .windows
+            .ignore_classes
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case(&identity.class_name))
+        {
+            continue;
+        }
 
         let desktop = match backend.desktop_for_window(hwnd) {
             Ok(desktop) => desktop,
             Err(_) => {
-                for state in occupancy.values_mut() {
-                    if *state == Occupancy::Empty {
-                        *state = Occupancy::Unknown;
-                    }
-                }
+                mark_empty_unknown(&mut occupancy);
                 continue;
             }
         };
@@ -60,30 +68,17 @@ pub fn snapshot(
                 occupancy.insert(desktop, Occupancy::Unknown);
                 continue;
             }
-            Ok(false) => {
-                removal_blocked.insert(desktop.clone());
-            }
-        }
-
-        if !is_eligible_application_window(hwnd) {
-            continue;
-        }
-        if config
-            .windows
-            .ignore_classes
-            .iter()
-            .any(|value| value.eq_ignore_ascii_case(&identity.class_name))
-        {
-            continue;
+            Ok(false) => {}
         }
 
         match executable_name(identity.process_id) {
             Ok(executable) => {
-                if config
-                    .windows
-                    .ignore_executables
-                    .iter()
-                    .any(|value| value.eq_ignore_ascii_case(&executable))
+                if ignored_shell_executable(&executable)
+                    || config
+                        .windows
+                        .ignore_executables
+                        .iter()
+                        .any(|value| value.eq_ignore_ascii_case(&executable))
                 {
                     continue;
                 }
@@ -92,12 +87,6 @@ pub fn snapshot(
             Err(_) => {
                 occupancy.insert(desktop, Occupancy::Unknown);
             }
-        }
-    }
-
-    for desktop in removal_blocked {
-        if occupancy.get(&desktop) == Some(&Occupancy::Empty) {
-            occupancy.insert(desktop, Occupancy::Unknown);
         }
     }
 
@@ -118,6 +107,22 @@ pub fn exclusive_fullscreen_active() -> bool {
         if hwnd == 0 {
             return false;
         }
+        let Some(identity) = inspect_identity(hwnd) else {
+            return false;
+        };
+        if identity.process_id == current_process_id()
+            || ignored_class(&identity.class_name)
+            || !is_foreground_application_window(hwnd)
+        {
+            return false;
+        }
+        let Ok(executable) = executable_name(identity.process_id) else {
+            return false;
+        };
+        if ignored_shell_executable(&executable) {
+            return false;
+        }
+
         let mut window_rect: RECT = zeroed();
         if GetWindowRect(hwnd, &mut window_rect) == 0 {
             return false;
@@ -135,10 +140,7 @@ pub fn exclusive_fullscreen_active() -> bool {
         if GetMonitorInfoW(monitor, &mut info) == 0 {
             return false;
         }
-        window_rect.left <= info.rcMonitor.left
-            && window_rect.top <= info.rcMonitor.top
-            && window_rect.right >= info.rcMonitor.right
-            && window_rect.bottom >= info.rcMonitor.bottom
+        rect_covers(window_rect, info.rcMonitor)
     }
 }
 
@@ -183,11 +185,37 @@ fn inspect_identity(hwnd: HWND) -> Option<BasicWindow> {
 
 fn is_eligible_application_window(hwnd: HWND) -> bool {
     unsafe {
-        if IsWindowVisible(hwnd) == 0 || GetWindow(hwnd, GW_OWNER) != 0 {
+        if GetWindow(hwnd, GW_OWNER) != 0 {
+            return false;
+        }
+        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        if ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) != 0 {
+            return false;
+        }
+        IsWindowVisible(hwnd) != 0 || window_is_cloaked(hwnd)
+    }
+}
+
+fn is_foreground_application_window(hwnd: HWND) -> bool {
+    unsafe {
+        if IsWindowVisible(hwnd) == 0 || GetWindow(hwnd, GW_OWNER) != 0 || window_is_cloaked(hwnd) {
             return false;
         }
         let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
         ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) == 0
+    }
+}
+
+fn window_is_cloaked(hwnd: HWND) -> bool {
+    unsafe {
+        let mut cloaked = 0_u32;
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED as u32,
+            (&mut cloaked as *mut u32).cast::<c_void>(),
+            size_of::<u32>() as u32,
+        ) >= 0
+            && cloaked != 0
     }
 }
 
@@ -208,6 +236,35 @@ fn executable_name(process_id: u32) -> Result<String, String> {
     }
 }
 
+fn mark_empty_unknown(occupancy: &mut HashMap<DesktopId, Occupancy>) {
+    for state in occupancy.values_mut() {
+        if *state == Occupancy::Empty {
+            *state = Occupancy::Unknown;
+        }
+    }
+}
+
+fn rect_covers(window: RECT, monitor: RECT) -> bool {
+    window.left <= monitor.left
+        && window.top <= monitor.top
+        && window.right >= monitor.right
+        && window.bottom >= monitor.bottom
+}
+
+fn ignored_shell_executable(executable: &str) -> bool {
+    const EXECUTABLES: &[&str] = &[
+        "LockApp.exe",
+        "SearchHost.exe",
+        "ShellExperienceHost.exe",
+        "ShellHost.exe",
+        "StartMenuExperienceHost.exe",
+        "TextInputHost.exe",
+    ];
+    EXECUTABLES
+        .iter()
+        .any(|value| value.eq_ignore_ascii_case(executable))
+}
+
 fn ignored_class(class_name: &str) -> bool {
     const CLASSES: &[&str] = &[
         "Shell_TrayWnd",
@@ -224,4 +281,48 @@ fn ignored_class(class_name: &str) -> bool {
     CLASSES
         .iter()
         .any(|value| value.eq_ignore_ascii_case(class_name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ignored_class, ignored_shell_executable, rect_covers};
+    use windows_sys::Win32::Foundation::RECT;
+
+    #[test]
+    fn shell_surfaces_are_not_user_applications() {
+        assert!(ignored_class("Progman"));
+        assert!(ignored_class("WorkerW"));
+        assert!(ignored_shell_executable("StartMenuExperienceHost.exe"));
+        assert!(ignored_shell_executable("searchhost.EXE"));
+        assert!(!ignored_shell_executable("notepad.exe"));
+    }
+
+    #[test]
+    fn fullscreen_requires_monitor_coverage() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        assert!(rect_covers(monitor, monitor));
+        assert!(rect_covers(
+            RECT {
+                left: -1,
+                top: -1,
+                right: 1921,
+                bottom: 1081,
+            },
+            monitor,
+        ));
+        assert!(!rect_covers(
+            RECT {
+                left: 0,
+                top: 0,
+                right: 1919,
+                bottom: 1080,
+            },
+            monitor,
+        ));
+    }
 }

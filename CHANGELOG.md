@@ -1,12 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.1.2
 
-- Preserved the active empty desktop instead of automatically switching the user to an occupied desktop.
-- Prevented reconciliation from treating DWM-cloaked application windows on inactive desktops as absent.
-- Blocked removal when any residual non-pinned window or uncertain mapping remains associated with a desktop.
-- Changed internal-empty fallback to the trailing spare instead of the previous occupied desktop.
-- Made circular wrap navigation the default for Win+wheel.
+- Prevented shell, desktop and Start surfaces from being misclassified as exclusive fullscreen applications and suspending Win+wheel navigation.
+- Replaced the unreliable `VK_NONAME` Start-menu suppression with a complete synthetic Control key chord after a processed Win+wheel gesture.
+- Reset partial wheel accumulation whenever DeskPilot is disabled, suspended, unavailable or the Windows key is not held.
+- Stopped auxiliary and shell windows from forcing otherwise empty desktops into an indeterminate state.
+- Continued counting DWM-cloaked application windows on inactive virtual desktops as occupied.
+- Added built-in exclusions for Start, Search, Shell Experience, Text Input and Lock shell hosts.
+- Preserved the active empty desktop, used circular wrap navigation by default and compacted non-current trailing empty desktops safely.
 
 ## 0.1.1
 
