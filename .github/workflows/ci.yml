@@ -1,0 +1,193 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feature/portable-dynamic-desktop-manager
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deskpilot-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  TARGET: x86_64-pc-windows-msvc
+
+jobs:
+  validate:
+    name: Windows build and package
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout exact source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install stable Rust MSVC
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add $env:TARGET
+          rustup component add rustfmt clippy
+          rustc --version --verbose
+          cargo --version
+
+      - name: Verify committed dependency lock
+        shell: pwsh
+        run: |
+          if (-not (Test-Path Cargo.lock -PathType Leaf)) { throw 'Cargo.lock is not committed.' }
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
+
+      - name: Check formatting
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          cargo fmt --all -- --check 2>&1 |
+            Tee-Object -FilePath artifacts\format.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Clippy
+        shell: pwsh
+        run: |
+          cargo clippy --workspace --all-targets --locked -- -D warnings 2>&1 |
+            Tee-Object -FilePath artifacts\clippy.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Unit and integration tests
+        shell: pwsh
+        run: |
+          cargo test --workspace --locked 2>&1 |
+            Tee-Object -FilePath artifacts\tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate PowerShell scripts
+        shell: pwsh
+        run: |
+          $failures = @()
+          Get-ChildItem .\scripts -Filter '*.ps1' -File | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            foreach ($error in $errors) { $failures += "$($_.Name): $($error.Message)" }
+          }
+          if ($failures.Count -gt 0) { throw ($failures -join [Environment]::NewLine) }
+
+      - name: Release build
+        shell: pwsh
+        run: |
+          cargo build --release --locked --target $env:TARGET 2>&1 |
+            Tee-Object -FilePath artifacts\build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate redirected CLI output
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path '.\target\x86_64-pc-windows-msvc\release\DeskPilot.exe').Path
+          function Invoke-DeskPilotProcess {
+            param([string]$Name, [string[]]$Arguments)
+            $start = [System.Diagnostics.ProcessStartInfo]::new()
+            $start.FileName = $exe
+            $start.UseShellExecute = $false
+            $start.CreateNoWindow = $true
+            $start.RedirectStandardOutput = $true
+            $start.RedirectStandardError = $true
+            foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) }
+            $process = [System.Diagnostics.Process]::new()
+            $process.StartInfo = $start
+            $null = $process.Start()
+            $stdout = $process.StandardOutput.ReadToEnd()
+            $stderr = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+            $result = [pscustomobject]@{
+              ExitCode = $process.ExitCode
+              Stdout = $stdout.Trim()
+              Stderr = $stderr.Trim()
+            }
+            $stdout | Set-Content -Encoding utf8NoBOM "artifacts\$Name.stdout.txt"
+            $stderr | Set-Content -Encoding utf8NoBOM "artifacts\$Name.stderr.txt"
+            return $result
+          }
+
+          $version = Invoke-DeskPilotProcess -Name 'version' -Arguments @('--version')
+          if ($version.ExitCode -ne 0) { throw "Version command failed: $($version.Stderr)" }
+          if ($version.Stdout -ne 'DeskPilot 0.1.0') { throw "Unexpected version output: [$($version.Stdout)]" }
+
+          $config = Invoke-DeskPilotProcess -Name 'config-validate' -Arguments @('config', 'validate', '.\deskpilot.example.toml')
+          if ($config.ExitCode -ne 0) { throw "Config validation failed: $($config.Stderr)" }
+          if (-not $config.Stdout.StartsWith('valid:')) { throw "Unexpected config validation output: [$($config.Stdout)]" }
+
+          $selfTestResult = Invoke-DeskPilotProcess -Name 'self-test' -Arguments @('self-test', '--backend', 'mock', '--json')
+          if ($selfTestResult.ExitCode -ne 0) { throw "Mock self-test failed: $($selfTestResult.Stderr)" }
+          $selfTest = $selfTestResult.Stdout | ConvertFrom-Json
+          if (-not $selfTest.passed -or $selfTest.backend -ne 'mock') { throw 'Mock backend self-test returned an invalid result.' }
+
+      - name: Verify exact license
+        shell: pwsh
+        run: .\scripts\verify-license.ps1
+
+      - name: Build portable package
+        shell: pwsh
+        run: |
+          .\scripts\build-portable.ps1 -SkipBuild 2>&1 |
+            Tee-Object -FilePath artifacts\package.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify portable structure and checksums
+        shell: pwsh
+        run: |
+          $required = @(
+            'dist\DeskPilot\DeskPilot.exe',
+            'dist\DeskPilot\deskpilot.example.toml',
+            'dist\DeskPilot\LICENSE.md',
+            'dist\DeskPilot\README.md',
+            'dist\DeskPilot\THIRD_PARTY_NOTICES.md',
+            'dist\DeskPilot\checksums.sha256'
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing package file: $path" }
+          }
+          $unexpected = Get-ChildItem -Recurse -File dist\DeskPilot | Where-Object Extension -in @('.pdb', '.tmp')
+          if ($unexpected) { throw "Unexpected package files: $($unexpected.FullName -join ', ')" }
+          Get-ChildItem dist\DeskPilot -File | Where-Object Name -ne 'checksums.sha256' | ForEach-Object {
+            $file = $_
+            $line = Get-Content dist\DeskPilot\checksums.sha256 | Where-Object { $_ -match "^[0-9a-f]{64}  $([regex]::Escape($file.Name))$" }
+            if (-not $line) { throw "Missing checksum for $($file.Name)" }
+            $expected = ($line -split '\s+')[0]
+            $actual = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) { throw "Checksum mismatch for $($file.Name)" }
+          }
+
+      - name: Capture CI metadata
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          [ordered]@{
+            commit = '${{ github.sha }}'
+            head_sha = '${{ github.event.pull_request.head.sha || github.sha }}'
+            runner = '${{ runner.os }}'
+            rustc = (rustc --version)
+            cargo = (cargo --version)
+            timestamp_utc = [DateTime]::UtcNow.ToString('o')
+          } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM artifacts\ci-metadata.json
+          if (Test-Path dist\package-report.json) { Copy-Item dist\package-report.json artifacts\package-report.json }
+
+      - name: Upload portable artifact and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeskPilot-portable-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            dist/*.zip
+            dist/package-report.json
+            artifacts/*
+          if-no-files-found: warn
+          retention-days: 14

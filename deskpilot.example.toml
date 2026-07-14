@@ -1,0 +1,36 @@
+# DeskPilot portable configuration.
+# Copy this file as deskpilot.toml beside DeskPilot.exe, or let DeskPilot create it.
+schema_version = 1
+enabled = true
+
+[wheel]
+# "normal": wheel up = previous, wheel down = next.
+# "inverted": reverse both directions.
+direction = "normal"
+# "clamp": stop at the first/last desktop. "wrap": cycle around.
+navigation = "clamp"
+# High-resolution wheel deltas are accumulated until this threshold is reached.
+threshold = 120
+# Prevents one physical gesture from producing several accidental switches.
+cooldown_ms = 180
+
+[desktops]
+dynamic = true
+# Events are coalesced before inspecting desktops and windows.
+reconcile_delay_ms = 750
+# An internal desktop must remain empty for this long before removal.
+empty_grace_ms = 1500
+# Low-frequency safety pass for events Windows may not deliver.
+watchdog_interval_ms = 3000
+
+[windows]
+suspend_in_exclusive_fullscreen = true
+# Case-insensitive executable basenames, for example: ["game.exe"]
+ignore_executables = []
+# Case-insensitive Win32 window classes.
+ignore_classes = []
+
+[logging]
+level = "info"
+max_files = 5
+max_file_size_mb = 2
