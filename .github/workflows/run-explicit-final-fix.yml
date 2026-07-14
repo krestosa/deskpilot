@@ -1,0 +1,53 @@
+# File purpose: Temporarily applies and validates the explicit final reconciliation patch script.
+name: Run explicit final reconciliation fix
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'fix/final-reconciliation-fence'
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/final-reconciliation-fence
+          fetch-depth: 0
+
+      - name: Install Rust 1.85
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal --component rustfmt --component clippy --target x86_64-pc-windows-msvc
+          rustup default 1.85.0
+
+      - name: Apply explicit patch
+        shell: pwsh
+        run: python tools/apply_final_fix.py
+
+      - name: Validate exact patched tree
+        shell: pwsh
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+          cargo build --release --locked --target x86_64-pc-windows-msvc
+          .\scripts\verify-license.ps1
+          .\scripts\build-portable.ps1 -SkipBuild
+
+      - name: Publish validated changes
+        shell: pwsh
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git rm tools/apply_final_fix.py
+          git rm .github/workflows/run-explicit-final-fix.yml
+          git commit -m "Serialize reconciliation and capture Win scroll"
+          git push origin HEAD:fix/final-reconciliation-fence
