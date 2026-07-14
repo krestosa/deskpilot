@@ -8,7 +8,7 @@ on:
       - '.github/workflows/finalize-0.1.3.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: deskpilot-finalize-0-1-3
@@ -76,13 +76,41 @@ jobs:
             throw "Unexpected version result: exit=$($process.ExitCode) stdout=[$stdout] stderr=[$stderr]"
           }
 
+      - name: Publish validated Cargo version files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_BRANCH: fix/reliable-start-suppression-and-empty-compaction
+        shell: pwsh
+        run: |
+          function Update-RepositoryFile {
+            param(
+              [Parameter(Mandatory = $true)][string]$Path,
+              [Parameter(Mandatory = $true)][string]$LocalPath,
+              [Parameter(Mandatory = $true)][string]$Message
+            )
+
+            $encodedPath = ($Path -split '/' | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/'
+            $metadata = gh api "repos/$env:REPOSITORY/contents/$encodedPath`?ref=$env:TARGET_BRANCH" | ConvertFrom-Json
+            $content = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $LocalPath)))
+            $body = [ordered]@{
+              message = $Message
+              content = $content
+              sha = $metadata.sha
+              branch = $env:TARGET_BRANCH
+            } | ConvertTo-Json -Compress
+            $body | gh api --method PUT "repos/$env:REPOSITORY/contents/$encodedPath" --input - | Out-Null
+          }
+
+          Update-RepositoryFile -Path 'Cargo.toml' -LocalPath 'Cargo.toml' -Message 'Set DeskPilot version to 0.1.3'
+          Update-RepositoryFile -Path 'Cargo.lock' -LocalPath 'Cargo.lock' -Message 'Update lockfile for DeskPilot 0.1.3'
+
       - name: Stage validated source artifact
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force finalized-source\.github\workflows | Out-Null
+          New-Item -ItemType Directory -Force finalized-source | Out-Null
           Copy-Item Cargo.toml finalized-source\Cargo.toml
           Copy-Item Cargo.lock finalized-source\Cargo.lock
-          Copy-Item .github\workflows\ci.yml finalized-source\.github\workflows\ci.yml
           Copy-Item dist\DeskPilot-portable-0.1.3.zip finalized-source\DeskPilot-portable-0.1.3.zip
 
       - name: Upload validated source and portable package
