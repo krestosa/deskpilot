@@ -49,7 +49,7 @@ jobs:
           base64 --decode deskpilot-source.b64 > deskpilot-source.tar.gz
           echo 'c3798e433b255ce39234a02b229c5bda904ae2fb765f0a316d51c90907a1d214  deskpilot-source.tar.gz' | sha256sum --check --strict
 
-      - name: Expand final tree and remove transport files
+      - name: Expand non-workflow source tree
         shell: bash
         run: |
           set -euo pipefail
@@ -57,21 +57,30 @@ jobs:
           rm -rf .deskpilot-bootstrap
           rm -f deskpilot-source.b64 deskpilot-source.tar.gz
           rm -f .github/materialize.py
-          rm -f .github/workflows/bootstrap.yml
-          rm -f .github/workflows/materialize-source.yml
+          rm -f .github/workflows/ci.yml
+          rm -f .github/workflows/windows-integration.yml
           test -f Cargo.toml
           test -f src/main.rs
           test -f LICENSE.md
-          test -f .github/workflows/ci.yml
           test ! -e .deskpilot-bootstrap
 
       - name: Commit expanded source
+        id: publish
         shell: bash
         run: |
-          set -euo pipefail
+          set -o pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add --all
           git diff --cached --check
           git commit -m 'Implement portable dynamic desktop manager'
-          git push origin HEAD:feature/portable-dynamic-desktop-manager
+          git push origin HEAD:feature/portable-dynamic-desktop-manager 2>&1 | tee /tmp/push.log
+
+      - name: Upload publication diagnostics
+        if: always() && steps.publish.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deskpilot-publication-${{ github.sha }}
+          path: /tmp/push.log
+          if-no-files-found: warn
+          retention-days: 3
