@@ -64,7 +64,7 @@ pub fn snapshot(
             continue;
         }
 
-        if let Some(desktop) = locate_window_desktop(backend, &desktops, hwnd) {
+        if let Some(desktop) = locate_window_desktop(backend, &desktops, &current.id, hwnd) {
             occupancy.insert(desktop, Occupancy::Occupied);
         }
     }
@@ -83,8 +83,16 @@ pub fn snapshot(
 fn locate_window_desktop(
     backend: &WinvdBackend,
     desktops: &[DesktopInfo],
+    current: &DesktopId,
     hwnd: HWND,
 ) -> Option<DesktopId> {
+    if backend
+        .is_window_on_current_desktop(hwnd)
+        .is_ok_and(|present| present)
+    {
+        return Some(current.clone());
+    }
+
     if let Ok(desktop) = backend.desktop_for_window(hwnd) {
         if desktops.iter().any(|candidate| candidate.id == desktop) {
             return Some(desktop);

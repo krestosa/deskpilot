@@ -152,6 +152,11 @@ impl WinvdBackend {
         winvd::is_window_on_desktop(desktop.index as u32, to_win_hwnd(hwnd)).map_err(format_error)
     }
 
+    pub fn is_window_on_current_desktop(&self, hwnd: HWND) -> Result<bool, String> {
+        self.require_compatible()?;
+        winvd::is_window_on_current_desktop(to_win_hwnd(hwnd)).map_err(format_error)
+    }
+
     pub fn is_window_pinned(&self, hwnd: HWND) -> Result<bool, String> {
         self.require_compatible()?;
         winvd::is_pinned_window(to_win_hwnd(hwnd)).map_err(format_error)

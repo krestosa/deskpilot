@@ -39,7 +39,7 @@ Upgrade to 0.1.4 or later. Versions 0.1.2 and 0.1.3 attempted to make the Window
 
 Version 0.1.4 directly intercepts the final physical left or right Windows-key release after a consumed wheel gesture. It replaces that event with a marked `Control down → matching Windows key up → Control up` sequence and suppresses the original release only when Windows accepts the complete replacement. Synthetic replacement events are marked so the low-level keyboard hook cannot process them recursively.
 
-Do not globally disable the Windows key. Confirm that only one DeskPilot process is running and that `DeskPilot.exe --version` reports 0.1.4 before testing.
+Do not globally disable the Windows key. Confirm that only one DeskPilot process is running and that `DeskPilot.exe --version` reports 0.1.4 or later before testing.
 
 ## Extra empty desktops are not removed
 
@@ -50,6 +50,12 @@ Version 0.1.4 first excludes Explorer, DWM, Start, input, tray, control-center, 
 When several trailing desktops are empty, reconciliation removes non-current duplicates one at a time from fresh snapshots until exactly one empty spare remains. DeskPilot always preserves the active desktop. For example, if desktop 1 is occupied and desktops 2 and 3 are empty while you are on desktop 3, DeskPilot removes desktop 2. Your active desktop remains and Windows renumbers it as desktop 2.
 
 Allow at least `empty_grace_ms + reconcile_delay_ms` after closing the last application. With the default configuration this is approximately 2.25 seconds, and the watchdog provides another reconciliation pass within 3 seconds.
+
+## No new spare appears after opening an application on the final desktop
+
+Upgrade to 0.1.5 or later. Earlier scheduling replaced the pending reconciliation deadline after every window event. Applications that emitted a continuous stream of create, show and hide events could therefore postpone reconciliation indefinitely, while the watchdog could not advance an already-pending future deadline.
+
+Version 0.1.5 retains the earliest pending deadline and lets the watchdog force an immediate pass. It also checks `IVirtualDesktopManager::IsWindowOnCurrentVirtualDesktop` before internal GUID mapping, so a newly opened application on the active final desktop is counted immediately. Once that final desktop is occupied, DeskPilot creates exactly one empty spare after it without switching the user.
 
 ## Portable directory is read-only
 
