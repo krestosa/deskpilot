@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-# Function purpose: Performs the Invoke DeskPilotRaw operation required by this module.
+# Function purpose: Runs one DeskPilot command against the isolated smoke-test data directory and returns its exit code and captured output without throwing.
 function Invoke-DeskPilotRaw {
     param([string[]]$Arguments)
     $start = [System.Diagnostics.ProcessStartInfo]::new()
@@ -33,7 +33,7 @@ function Invoke-DeskPilotRaw {
     }
 }
 
-# Function purpose: Performs the Invoke DeskPilot operation required by this module.
+# Function purpose: Runs one DeskPilot command, raises a descriptive error on failure, and returns the command's standard output on success.
 function Invoke-DeskPilot {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
     $result = Invoke-DeskPilotRaw -Arguments $Arguments
@@ -43,12 +43,12 @@ function Invoke-DeskPilot {
     return $result.Stdout
 }
 
-# Function purpose: Performs the Get Desktops operation required by this module.
+# Function purpose: Queries DeskPilot for the ordered virtual desktop list and converts the JSON response into PowerShell objects.
 function Get-Desktops {
     return @(Invoke-DeskPilot desktops list --json | ConvertFrom-Json)
 }
 
-# Function purpose: Performs the Wait Until operation required by this module.
+# Function purpose: Polls a condition every 200 milliseconds until it succeeds or the timeout expires, then raises the supplied failure message.
 function Wait-Until {
     param([scriptblock]$Condition, [string]$Failure, [int]$Seconds = 10)
     $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
