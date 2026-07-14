@@ -26,9 +26,6 @@ pub enum Mutation {
         desktop: DesktopId,
         fallback: DesktopId,
     },
-    Switch {
-        desktop: DesktopId,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -60,71 +57,59 @@ pub fn plan(desktops: &[DesktopState]) -> Plan {
         };
     }
 
-    let mut mutations = Vec::new();
-
     let trailing_empty_start = desktops
         .iter()
         .rposition(|desktop| desktop.occupancy != Occupancy::Empty)
         .map_or(0, |index| index + 1);
-    if last.saturating_sub(trailing_empty_start) >= 1 {
-        for index in (trailing_empty_start + 1..=last).rev() {
-            let fallback = desktops[index - 1].id.clone();
-            mutations.push(Mutation::Remove {
-                desktop: desktops[index].id.clone(),
-                fallback,
-            });
+    let trailing_empty_count = desktops.len() - trailing_empty_start;
+
+    if trailing_empty_count > 1 {
+        if let Some(removing) = (trailing_empty_start..=last)
+            .rev()
+            .find(|&index| !desktops[index].current)
+        {
+            let fallback = trailing_empty_fallback(desktops, trailing_empty_start, removing);
+            return Plan {
+                mutations: vec![Mutation::Remove {
+                    desktop: desktops[removing].id.clone(),
+                    fallback: desktops[fallback].id.clone(),
+                }],
+                stable: false,
+            };
         }
-        return Plan {
-            mutations,
-            stable: false,
-        };
     }
 
-    for (index, desktop) in desktops.iter().enumerate().take(last) {
-        if desktop.occupancy != Occupancy::Empty || !desktop.empty_grace_elapsed {
+    for desktop in desktops.iter().take(last) {
+        if desktop.current
+            || desktop.occupancy != Occupancy::Empty
+            || !desktop.empty_grace_elapsed
+        {
             continue;
         }
-        let fallback_index = nearest_safe_fallback(desktops, index);
-        let Some(fallback_index) = fallback_index else {
-            continue;
-        };
-        if desktop.current {
-            mutations.push(Mutation::Switch {
-                desktop: desktops[fallback_index].id.clone(),
-            });
-        }
-        mutations.push(Mutation::Remove {
-            desktop: desktop.id.clone(),
-            fallback: desktops[fallback_index].id.clone(),
-        });
+
         return Plan {
-            mutations,
+            mutations: vec![Mutation::Remove {
+                desktop: desktop.id.clone(),
+                fallback: desktops[last].id.clone(),
+            }],
             stable: false,
         };
     }
 
     Plan {
-        mutations,
+        mutations: Vec::new(),
         stable: true,
     }
 }
 
-fn nearest_safe_fallback(desktops: &[DesktopState], removing: usize) -> Option<usize> {
-    let right = (removing + 1..desktops.len())
-        .find(|&index| desktops[index].occupancy != Occupancy::Unknown);
-    let left = (0..removing)
-        .rev()
-        .find(|&index| desktops[index].occupancy != Occupancy::Unknown);
-    match (left, right) {
-        (Some(left), Some(right)) => {
-            if removing - left <= right - removing {
-                Some(left)
-            } else {
-                Some(right)
-            }
-        }
-        (Some(left), None) => Some(left),
-        (None, Some(right)) => Some(right),
-        (None, None) => None,
+fn trailing_empty_fallback(
+    desktops: &[DesktopState],
+    trailing_empty_start: usize,
+    removing: usize,
+) -> usize {
+    if removing > trailing_empty_start {
+        removing - 1
+    } else {
+        removing + 1
     }
 }
