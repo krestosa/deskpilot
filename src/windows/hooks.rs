@@ -73,17 +73,17 @@ impl HookController {
         })
     }
 
-    // Function purpose: Verifies the set enabled scenario and its expected safety or state invariant.
+    // Function purpose: Updates enabled.
     pub fn set_enabled(&self, enabled: bool) {
         self.context.enabled.store(enabled, Ordering::Release);
     }
 
-    // Function purpose: Verifies the set backend ready scenario and its expected safety or state invariant.
+    // Function purpose: Updates backend ready.
     pub fn set_backend_ready(&self, ready: bool) {
         self.context.backend_ready.store(ready, Ordering::Release);
     }
 
-    // Function purpose: Verifies the set suspended scenario and its expected safety or state invariant.
+    // Function purpose: Updates suspended.
     pub fn set_suspended(&self, suspended: bool) {
         self.context.suspended.store(suspended, Ordering::Release);
     }
@@ -107,7 +107,7 @@ impl Drop for HookController {
     }
 }
 
-// Function purpose: Verifies the run hook loop scenario and its expected safety or state invariant.
+// Function purpose: Performs the run hook loop operation required by this module.
 fn run_hook_loop(context: &HookContext) -> Result<(), String> {
     unsafe {
         context
@@ -217,14 +217,14 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
     unsafe { CallNextHookEx(0 as HHOOK, code, wparam, lparam) }
 }
 
-// Function purpose: Verifies the reset wheel scenario and its expected safety or state invariant.
+// Function purpose: Resets wheel.
 fn reset_wheel(context: &HookContext) {
     if let Ok(mut wheel) = context.wheel.try_lock() {
         wheel.reset();
     }
 }
 
-// Function purpose: Verifies the win pressed scenario and its expected safety or state invariant.
+// Function purpose: Performs the win pressed operation required by this module.
 fn win_pressed(context: &HookContext) -> bool {
     context.left_win_down.load(Ordering::Acquire)
         || context.right_win_down.load(Ordering::Acquire)
@@ -234,7 +234,7 @@ fn win_pressed(context: &HookContext) -> bool {
         }
 }
 
-// Function purpose: Verifies the send suppressed win release scenario and its expected safety or state invariant.
+// Function purpose: Sends suppressed win release.
 fn send_suppressed_win_release(win_key: u16) -> bool {
     let inputs = suppressed_win_release_inputs(win_key);
     unsafe {
@@ -246,7 +246,7 @@ fn send_suppressed_win_release(win_key: u16) -> bool {
     }
 }
 
-// Function purpose: Verifies the suppressed win release inputs scenario and its expected safety or state invariant.
+// Function purpose: Performs the suppressed win release inputs operation required by this module.
 fn suppressed_win_release_inputs(win_key: u16) -> [INPUT; 3] {
     [
         keyboard_input(VK_CONTROL, false),
@@ -255,7 +255,7 @@ fn suppressed_win_release_inputs(win_key: u16) -> [INPUT; 3] {
     ]
 }
 
-// Function purpose: Verifies the keyboard input scenario and its expected safety or state invariant.
+// Function purpose: Performs the keyboard input operation required by this module.
 fn keyboard_input(key: u16, key_up: bool) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,

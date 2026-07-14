@@ -22,7 +22,7 @@ struct Manifest {
     files: BTreeMap<String, ManifestEntry>,
 }
 
-// Function purpose: Verifies the redacted config toml scenario and its expected safety or state invariant.
+// Function purpose: Performs the redacted config toml operation required by this module.
 pub fn redacted_config_toml(config: &Config) -> Result<String, String> {
     let mut redacted = config.clone();
     redact_rules(&mut redacted.windows.ignore_executables);
@@ -110,7 +110,7 @@ pub fn create_support_bundle(
     Ok(output)
 }
 
-// Function purpose: Verifies the redact rules scenario and its expected safety or state invariant.
+// Function purpose: Redacts rules.
 fn redact_rules(values: &mut Vec<String>) {
     if !values.is_empty() {
         let count = values.len();
@@ -121,7 +121,7 @@ fn redact_rules(values: &mut Vec<String>) {
     }
 }
 
-// Function purpose: Verifies the checksum file scenario and its expected safety or state invariant.
+// Function purpose: Performs the checksum file operation required by this module.
 fn checksum_file(manifest: &Manifest) -> String {
     let mut output = String::new();
     for (name, entry) in &manifest.files {
@@ -130,7 +130,7 @@ fn checksum_file(manifest: &Manifest) -> String {
     output
 }
 
-// Function purpose: Verifies the add bytes scenario and its expected safety or state invariant.
+// Function purpose: Performs the add bytes operation required by this module.
 fn add_bytes(
     zip: &mut zip::ZipWriter<File>,
     options: SimpleFileOptions,
@@ -149,7 +149,7 @@ fn add_bytes(
     Ok(())
 }
 
-// Function purpose: Verifies the write bytes scenario and its expected safety or state invariant.
+// Function purpose: Writes bytes.
 fn write_bytes(
     zip: &mut zip::ZipWriter<File>,
     options: SimpleFileOptions,
@@ -310,7 +310,7 @@ fn sha256_hex(data: &[u8]) -> String {
     output
 }
 
-// Function purpose: Verifies the safe timestamp scenario and its expected safety or state invariant.
+// Function purpose: Performs the safe timestamp operation required by this module.
 fn safe_timestamp() -> String {
     timestamp_utc().replace([':', '.'], "-")
 }

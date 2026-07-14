@@ -233,7 +233,7 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
     Ok(())
 }
 
-// Function purpose: Verifies the schedule reconcile at earliest scenario and its expected safety or state invariant.
+// Function purpose: Keeps the earliest pending reconciliation deadline so later events cannot postpone required work.
 fn schedule_reconcile_at_earliest(pending: &mut Option<Instant>, deadline: Instant) {
     match pending {
         Some(current) if *current <= deadline => {}
@@ -257,14 +257,14 @@ struct AppState {
 }
 
 impl AppState {
-    // Function purpose: Verifies the config read scenario and its expected safety or state invariant.
+    // Function purpose: Returns a consistent configuration snapshot and falls back to safe defaults if the shared lock is poisoned.
     fn config_read(&self) -> Config {
         self.config
             .read()
             .map_or_else(|_| Config::default(), |config| config.clone())
     }
 
-    // Function purpose: Verifies the save config scenario and its expected safety or state invariant.
+    // Function purpose: Persists config.
     fn save_config(&self, config: &Config) -> Result<(), String> {
         config
             .write_atomic(&self.config_path)
@@ -361,7 +361,7 @@ impl AppState {
         Ok(states)
     }
 
-    // Function purpose: Verifies the handle tray scenario and its expected safety or state invariant.
+    // Function purpose: Handles tray.
     fn handle_tray(&mut self, command: TrayCommand, tray: Option<&Tray>) -> Result<bool, String> {
         let mut config = self.config_read();
         let mut reconcile = false;
@@ -420,7 +420,7 @@ impl AppState {
         Ok(reconcile)
     }
 
-    // Function purpose: Verifies the handle ipc scenario and its expected safety or state invariant.
+    // Function purpose: Handles ipc.
     fn handle_ipc(&mut self, request: ServerRequest) -> bool {
         let command = request.request.command.clone();
         let mut reconcile = false;
@@ -526,7 +526,7 @@ impl AppState {
         reconcile
     }
 
-    // Function purpose: Verifies the reload scenario and its expected safety or state invariant.
+    // Function purpose: Performs the reload operation required by this module.
     fn reload(&mut self) -> Result<(), String> {
         let config = Config::load(&self.config_path).map_err(|error| error.to_string())?;
         let mut target = self
@@ -538,7 +538,7 @@ impl AppState {
         Ok(())
     }
 
-    // Function purpose: Verifies the status scenario and its expected safety or state invariant.
+    // Function purpose: Performs the status operation required by this module.
     fn status(&self) -> serde_json::Value {
         let config = self.config_read();
         json!({
@@ -636,7 +636,7 @@ impl AppState {
         }
     }
 
-    // Function purpose: Verifies the update tray scenario and its expected safety or state invariant.
+    // Function purpose: Updates tray.
     fn update_tray(&self, tray: Option<&Tray>) {
         if let Some(tray) = tray {
             let config = self.config_read();
@@ -651,7 +651,7 @@ impl AppState {
         }
     }
 
-    // Function purpose: Verifies the publish scenario and its expected safety or state invariant.
+    // Function purpose: Performs the publish operation required by this module.
     fn publish(&self, kind: &str, message: impl Into<String>) {
         let message = message.into();
         log(LogLevel::Info, &message);
@@ -661,7 +661,7 @@ impl AppState {
         self.events.publish(Event::new(kind, message));
     }
 
-    // Function purpose: Verifies the error scenario and its expected safety or state invariant.
+    // Function purpose: Performs the error operation required by this module.
     fn error(&self, message: String) {
         log(LogLevel::Error, &message);
         if self.foreground {
@@ -671,7 +671,7 @@ impl AppState {
     }
 }
 
-// Function purpose: Verifies the bridge scenario and its expected safety or state invariant.
+// Function purpose: Performs the bridge operation required by this module.
 fn bridge<T, F>(receiver: Receiver<T>, sender: mpsc::Sender<AppSignal>, map: F)
 where
     T: Send + 'static,
@@ -686,7 +686,7 @@ where
     });
 }
 
-// Function purpose: Verifies the open path scenario and its expected safety or state invariant.
+// Function purpose: Opens path.
 fn open_path(path: &Path) {
     let operation = wide("open");
     let target = wide(path);
@@ -702,7 +702,7 @@ fn open_path(path: &Path) {
     }
 }
 
-// Function purpose: Verifies the tail log scenario and its expected safety or state invariant.
+// Function purpose: Performs the tail log operation required by this module.
 fn tail_log(path: &Path, lines: usize) -> Vec<String> {
     fs::read_to_string(path)
         .map(|text| {
@@ -718,7 +718,7 @@ fn tail_log(path: &Path, lines: usize) -> Vec<String> {
         .unwrap_or_default()
 }
 
-// Function purpose: Verifies the install panic hook scenario and its expected safety or state invariant.
+// Function purpose: Installs panic hook.
 fn install_panic_hook(data_dir: &Path) {
     let crash_dir = data_dir.join("crash-reports");
     let _ = fs::create_dir_all(&crash_dir);
@@ -744,7 +744,7 @@ struct InstanceGuard {
 }
 
 impl InstanceGuard {
-    // Function purpose: Verifies the acquire scenario and its expected safety or state invariant.
+    // Function purpose: Performs the acquire operation required by this module.
     fn acquire() -> Result<Self, String> {
         let sid = system::current_user_sid()?;
         let name = wide(format!("Local\\DeskPilot-{sid}"));

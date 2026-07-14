@@ -17,7 +17,7 @@ use windows_sys::Win32::System::Console::{
     STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
 };
 
-// Function purpose: Starts DeskPilot, parses the invocation, attaches a console when required, dispatches the command, and exits with its result code.
+// Function purpose: Starts DeskPilot, parses the invocation, dispatches the selected command, and exits with its result code.
 fn main() {
     let invocation = match Invocation::parse(std::env::args()) {
         Ok(invocation) => invocation,

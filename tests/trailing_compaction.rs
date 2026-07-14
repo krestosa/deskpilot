@@ -7,7 +7,7 @@ struct FakeBackend {
 }
 
 impl ReconcileBackend for FakeBackend {
-    // Function purpose: Builds a fresh ordered desktop snapshot with current occupancy and empty-grace state.
+    // Function purpose: Verifies the snapshot scenario and its expected safety or state invariant.
     fn snapshot(&mut self) -> Result<Vec<DesktopState>, String> {
         Ok(self.desktops.clone())
     }

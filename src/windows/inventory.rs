@@ -82,7 +82,7 @@ pub fn snapshot(
         .collect())
 }
 
-// Function purpose: Verifies the locate window desktop scenario and its expected safety or state invariant.
+// Function purpose: Locates window desktop.
 fn locate_window_desktop(
     backend: &WinvdBackend,
     desktops: &[DesktopInfo],
@@ -113,7 +113,7 @@ fn locate_window_desktop(
     matched
 }
 
-// Function purpose: Verifies the exclusive fullscreen active scenario and its expected safety or state invariant.
+// Function purpose: Performs the exclusive fullscreen active operation required by this module.
 pub fn exclusive_fullscreen_active() -> bool {
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -163,9 +163,9 @@ struct BasicWindow {
     process_id: u32,
 }
 
-// Function purpose: Verifies the enumerate windows scenario and its expected safety or state invariant.
+// Function purpose: Enumerates windows.
 fn enumerate_windows() -> Vec<HWND> {
-    // Function purpose: Verifies the callback scenario and its expected safety or state invariant.
+    // Function purpose: Handles the native callback callback and forwards only the relevant event.
     unsafe extern "system" fn callback(hwnd: HWND, parameter: LPARAM) -> BOOL {
         let windows = unsafe { &mut *(parameter as *mut Vec<HWND>) };
         windows.push(hwnd);
@@ -176,7 +176,7 @@ fn enumerate_windows() -> Vec<HWND> {
     windows
 }
 
-// Function purpose: Verifies the inspect identity scenario and its expected safety or state invariant.
+// Function purpose: Performs the inspect identity operation required by this module.
 fn inspect_identity(hwnd: HWND) -> Option<BasicWindow> {
     unsafe {
         if IsWindow(hwnd) == 0 {
@@ -199,7 +199,7 @@ fn inspect_identity(hwnd: HWND) -> Option<BasicWindow> {
     }
 }
 
-// Function purpose: Verifies the is eligible application window scenario and its expected safety or state invariant.
+// Function purpose: Returns whether eligible application window.
 fn is_eligible_application_window(hwnd: HWND) -> bool {
     unsafe {
         if GetWindow(hwnd, GW_OWNER) != 0 {
@@ -213,7 +213,7 @@ fn is_eligible_application_window(hwnd: HWND) -> bool {
     }
 }
 
-// Function purpose: Verifies the is foreground application window scenario and its expected safety or state invariant.
+// Function purpose: Returns whether foreground application window.
 fn is_foreground_application_window(hwnd: HWND) -> bool {
     unsafe {
         if IsWindowVisible(hwnd) == 0 || GetWindow(hwnd, GW_OWNER) != 0 || window_is_cloaked(hwnd) {
@@ -224,7 +224,7 @@ fn is_foreground_application_window(hwnd: HWND) -> bool {
     }
 }
 
-// Function purpose: Verifies the window is cloaked scenario and its expected safety or state invariant.
+// Function purpose: Performs the window is cloaked operation required by this module.
 fn window_is_cloaked(hwnd: HWND) -> bool {
     unsafe {
         let mut cloaked = 0_u32;
@@ -238,7 +238,7 @@ fn window_is_cloaked(hwnd: HWND) -> bool {
     }
 }
 
-// Function purpose: Verifies the executable name scenario and its expected safety or state invariant.
+// Function purpose: Performs the executable name operation required by this module.
 fn executable_name(process_id: u32) -> Result<String, String> {
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id);
@@ -256,7 +256,7 @@ fn executable_name(process_id: u32) -> Result<String, String> {
     }
 }
 
-// Function purpose: Verifies the rect covers scenario and its expected safety or state invariant.
+// Function purpose: Performs the rect covers operation required by this module.
 fn rect_covers(window: RECT, monitor: RECT) -> bool {
     window.left <= monitor.left
         && window.top <= monitor.top
@@ -264,7 +264,7 @@ fn rect_covers(window: RECT, monitor: RECT) -> bool {
         && window.bottom >= monitor.bottom
 }
 
-// Function purpose: Verifies the ignored shell executable scenario and its expected safety or state invariant.
+// Function purpose: Performs the ignored shell executable operation required by this module.
 fn ignored_shell_executable(executable: &str) -> bool {
     const EXECUTABLES: &[&str] = &[
         "backgroundTaskHost.exe",
@@ -290,7 +290,7 @@ fn ignored_shell_executable(executable: &str) -> bool {
         .any(|value| value.eq_ignore_ascii_case(executable))
 }
 
-// Function purpose: Verifies the ignored class scenario and its expected safety or state invariant.
+// Function purpose: Performs the ignored class operation required by this module.
 fn ignored_class(class_name: &str) -> bool {
     const CLASSES: &[&str] = &[
         "ApplicationManager_DesktopShellWindow",
