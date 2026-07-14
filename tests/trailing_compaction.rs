@@ -1,6 +1,4 @@
-use deskpilot::reconciliation::{
-    apply_plan, DesktopId, DesktopState, Occupancy, ReconcileBackend,
-};
+use deskpilot::reconciliation::{apply_plan, DesktopId, DesktopState, Occupancy, ReconcileBackend};
 
 struct FakeBackend {
     desktops: Vec<DesktopState>,
