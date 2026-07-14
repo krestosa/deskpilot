@@ -30,8 +30,11 @@ pub fn redacted_config_toml(config: &Config) -> Result<String, String> {
 pub fn create_support_bundle(
     data_dir: &Path,
     doctor_json: &str,
-    redacted_config: &str,
+    config_toml: &str,
 ) -> Result<PathBuf, String> {
+    let config: Config = toml::from_str(config_toml)
+        .map_err(|error| format!("support bundle configuration parse failed: {error}"))?;
+    let redacted_config = redacted_config_toml(&config)?;
     let output = data_dir.join(format!("deskpilot-support-{}.zip", safe_timestamp()));
     let file = File::create(&output).map_err(|error| error.to_string())?;
     let mut zip = zip::ZipWriter::new(file);
@@ -106,7 +109,10 @@ pub fn create_support_bundle(
 fn redact_rules(values: &mut Vec<String>) {
     if !values.is_empty() {
         let count = values.len();
-        *values = vec![format!("<redacted:{count} entr{}>", if count == 1 { "y" } else { "ies" })];
+        *values = vec![format!(
+            "<redacted:{count} entr{}>",
+            if count == 1 { "y" } else { "ies" }
+        )];
     }
 }
 
