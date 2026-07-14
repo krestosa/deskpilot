@@ -52,19 +52,18 @@ For every stable snapshot DeskPilot requires:
 ```text
 desktop_count >= 1
 known trailing empty desktops == 1
-known internal empty desktops == 0
+known internal empty desktops == 0, except an empty desktop currently held by the user
 known user windows moved or closed == 0
 ```
 
-The inventory maps every eligible top-level window to a desktop. Pinned windows are excluded. A failed or ambiguous inspection marks the affected desktop `unknown`; unknown state prevents destructive removal.
+The inventory maps eligible top-level windows to desktops. Windows on inactive virtual desktops may be DWM-cloaked, so cloaking alone is not treated as absence. Pinned windows are excluded. Any non-pinned residual window, failed mapping or ambiguous pin query makes the desktop non-removable.
 
-The planner is deterministic and has no Win32 dependencies. It can only emit:
+The planner is deterministic and has no Win32 dependencies. Normal reconciliation emits only:
 
 - `CreateTrailing`
-- `Switch { desktop }`
 - `Remove { desktop, fallback }`
 
-There is deliberately no move-window or close-window operation. A current empty desktop is switched away from before removal. Every mutation is followed by a fresh backend snapshot. The executor has a fixed iteration limit and detects no-progress cycles.
+The active desktop is never switched or removed by reconciliation. Duplicate trailing empties are compacted by removing a non-current duplicate. A non-current internal empty uses the known trailing spare as fallback rather than an occupied previous desktop. Each plan contains at most one destructive mutation, so the coordinator obtains a fresh snapshot before planning another removal. The executor has a fixed iteration limit and detects no-progress cycles.
 
 ## Failure behavior
 
