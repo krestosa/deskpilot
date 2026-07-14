@@ -1,10 +1,8 @@
 use crate::config::Config;
 use crate::reconciliation::{DesktopId, DesktopState, Occupancy};
-use std::collections::HashMap;
-use std::ffi::c_void;
+use std::collections::{HashMap, HashSet};
 use std::mem::{size_of, zeroed};
 use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, RECT};
-use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
@@ -31,14 +29,16 @@ pub fn snapshot(
         .iter()
         .map(|desktop| (desktop.id.clone(), Occupancy::Empty))
         .collect();
+    let mut removal_blocked = HashSet::new();
 
     for hwnd in enumerate_windows() {
-        let Some(basic) = inspect_basic(hwnd) else {
+        let Some(identity) = inspect_identity(hwnd) else {
             continue;
         };
-        if basic.process_id == current_process_id() || ignored_class(&basic.class_name) {
+        if identity.process_id == current_process_id() || ignored_class(&identity.class_name) {
             continue;
         }
+
         let desktop = match backend.desktop_for_window(hwnd) {
             Ok(desktop) => desktop,
             Err(_) => {
@@ -53,23 +53,31 @@ pub fn snapshot(
         if !occupancy.contains_key(&desktop) {
             continue;
         }
-        if config
-            .windows
-            .ignore_classes
-            .iter()
-            .any(|value| value.eq_ignore_ascii_case(&basic.class_name))
-        {
-            continue;
-        }
+
         match backend.is_window_pinned(hwnd) {
             Ok(true) => continue,
             Err(_) => {
                 occupancy.insert(desktop, Occupancy::Unknown);
                 continue;
             }
-            Ok(false) => {}
+            Ok(false) => {
+                removal_blocked.insert(desktop.clone());
+            }
         }
-        match executable_name(basic.process_id) {
+
+        if !is_eligible_application_window(hwnd) {
+            continue;
+        }
+        if config
+            .windows
+            .ignore_classes
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case(&identity.class_name))
+        {
+            continue;
+        }
+
+        match executable_name(identity.process_id) {
             Ok(executable) => {
                 if config
                     .windows
@@ -87,6 +95,12 @@ pub fn snapshot(
         }
     }
 
+    for desktop in removal_blocked {
+        if occupancy.get(&desktop) == Some(&Occupancy::Empty) {
+            occupancy.insert(desktop, Occupancy::Unknown);
+        }
+    }
+
     Ok(desktops
         .into_iter()
         .map(|desktop| DesktopState {
@@ -96,31 +110,6 @@ pub fn snapshot(
             id: desktop.id,
         })
         .collect())
-}
-
-pub fn desktop_is_safe_to_remove(backend: &WinvdBackend, desktop: &DesktopId) -> bool {
-    for hwnd in enumerate_windows() {
-        let Some(identity) = inspect_identity(hwnd) else {
-            continue;
-        };
-        if identity.process_id == current_process_id() || ignored_class(&identity.class_name) {
-            continue;
-        }
-
-        let mapped = match backend.desktop_for_window(hwnd) {
-            Ok(mapped) => mapped,
-            Err(_) => return false,
-        };
-        if &mapped != desktop {
-            continue;
-        }
-
-        match backend.is_window_pinned(hwnd) {
-            Ok(true) => continue,
-            Ok(false) | Err(_) => return false,
-        }
-    }
-    true
 }
 
 pub fn exclusive_fullscreen_active() -> bool {
@@ -170,30 +159,6 @@ fn enumerate_windows() -> Vec<HWND> {
     windows
 }
 
-fn inspect_basic(hwnd: HWND) -> Option<BasicWindow> {
-    unsafe {
-        if IsWindowVisible(hwnd) == 0 || GetWindow(hwnd, GW_OWNER) != 0 {
-            return None;
-        }
-        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-        if ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) != 0 {
-            return None;
-        }
-        let mut cloaked = 0_u32;
-        if DwmGetWindowAttribute(
-            hwnd,
-            DWMWA_CLOAKED as u32,
-            (&mut cloaked as *mut u32).cast::<c_void>(),
-            size_of::<u32>() as u32,
-        ) >= 0
-            && cloaked != 0
-        {
-            return None;
-        }
-    }
-    inspect_identity(hwnd)
-}
-
 fn inspect_identity(hwnd: HWND) -> Option<BasicWindow> {
     unsafe {
         if IsWindow(hwnd) == 0 {
@@ -213,6 +178,16 @@ fn inspect_identity(hwnd: HWND) -> Option<BasicWindow> {
             class_name: from_wide(&class[..length as usize]),
             process_id,
         })
+    }
+}
+
+fn is_eligible_application_window(hwnd: HWND) -> bool {
+    unsafe {
+        if IsWindowVisible(hwnd) == 0 || GetWindow(hwnd, GW_OWNER) != 0 {
+            return false;
+        }
+        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) == 0
     }
 }
 
