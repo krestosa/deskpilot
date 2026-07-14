@@ -1,13 +1,18 @@
 use std::ffi::c_void;
 use std::mem::{size_of, zeroed};
 use std::path::Path;
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, HLOCAL};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, GetLastError, ERROR_SUCCESS, HANDLE, HLOCAL,
+};
 use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows_sys::Win32::Security::{
     GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, OpenProcessToken,
     TokenIntegrityLevel, TokenUser, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER,
 };
 use windows_sys::Win32::System::Memory::LocalFree;
+use windows_sys::Win32::System::Registry::{
+    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, REG_DWORD,
+};
 use windows_sys::Win32::System::SystemInformation::{GetVersionExW, OSVERSIONINFOW};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId};
 use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, GetShellWindow};
@@ -19,6 +24,7 @@ pub struct WindowsVersion {
     pub major: u32,
     pub minor: u32,
     pub build: u32,
+    pub revision: u32,
 }
 
 pub fn windows_version() -> WindowsVersion {
@@ -30,14 +36,50 @@ pub fn windows_version() -> WindowsVersion {
                 major: info.dwMajorVersion,
                 minor: info.dwMinorVersion,
                 build: info.dwBuildNumber,
+                revision: read_ubr().unwrap_or(0),
             }
         } else {
             WindowsVersion {
                 major: 0,
                 minor: 0,
                 build: 0,
+                revision: 0,
             }
         }
+    }
+}
+
+fn read_ubr() -> Option<u32> {
+    unsafe {
+        let subkey = wide("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion");
+        let mut key = 0;
+        if RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            subkey.as_ptr(),
+            0,
+            KEY_QUERY_VALUE,
+            &mut key,
+        ) != ERROR_SUCCESS
+        {
+            return None;
+        }
+
+        let value_name = wide("UBR");
+        let mut value = 0_u32;
+        let mut value_type = 0_u32;
+        let mut size = size_of::<u32>() as u32;
+        let result = RegQueryValueExW(
+            key,
+            value_name.as_ptr(),
+            std::ptr::null_mut(),
+            &mut value_type,
+            (&mut value as *mut u32).cast::<u8>(),
+            &mut size,
+        );
+        RegCloseKey(key);
+
+        (result == ERROR_SUCCESS && value_type == REG_DWORD && size == size_of::<u32>() as u32)
+            .then_some(value)
     }
 }
 
