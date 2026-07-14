@@ -1,0 +1,57 @@
+name: Fix test module ordering
+
+on:
+  push:
+    branches: [fix/create-trailing-after-window-open]
+    paths: ['.github/workflows/fix-test-module-order.yml']
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches: [main]
+    paths: ['.github/workflows/fix-test-module-order.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/create-trailing-after-window-open
+          fetch-depth: 0
+
+      - name: Move tests to the end and validate
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          path = Path('src/app.rs')
+          text = path.read_text(encoding='utf-8')
+          start = text.index('#[cfg(test)]\nmod scheduling_tests {')
+          marker = '\nstruct InstanceGuard {'
+          end = text.index(marker, start)
+          module = text[start:end].rstrip() + '\n'
+          text = text[:start] + text[end + 1:]
+          text = text.rstrip() + '\n\n' + module
+          path.write_text(text, encoding='utf-8', newline='\n')
+          '@ | python -
+
+          rustup toolchain install 1.85.0 --profile minimal --component rustfmt --component clippy --target x86_64-pc-windows-msvc
+          rustup default 1.85.0
+          cargo fmt --all
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+
+      - name: Publish clean commit
+        shell: pwsh
+        run: |
+          Remove-Item .github\workflows\fix-test-module-order.yml -Force
+          git add src\app.rs .github\workflows\fix-test-module-order.yml
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Place scheduling tests after runtime items'
+          git push origin HEAD:fix/create-trailing-after-window-open
