@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -117,11 +118,11 @@ fn redact_rules(values: &mut Vec<String>) {
 }
 
 fn checksum_file(manifest: &Manifest) -> String {
-    manifest
-        .files
-        .iter()
-        .map(|(name, entry)| format!("{}  {name}\n", entry.sha256))
-        .collect()
+    let mut output = String::new();
+    for (name, entry) in &manifest.files {
+        let _ = writeln!(&mut output, "{}  {name}", entry.sha256);
+    }
+    output
 }
 
 fn add_bytes(
@@ -294,7 +295,11 @@ fn sha256_hex(data: &[u8]) -> String {
         state[7] = state[7].wrapping_add(h);
     }
 
-    state.iter().map(|word| format!("{word:08x}")).collect()
+    let mut output = String::with_capacity(64);
+    for word in state {
+        let _ = write!(&mut output, "{word:08x}");
+    }
+    output
 }
 
 fn safe_timestamp() -> String {
