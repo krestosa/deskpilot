@@ -35,9 +35,9 @@ impl Logger {
                 "logger is already initialized",
             ));
         }
-        LOGGER.get().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::Other, "logger initialization failed")
-        })
+        LOGGER
+            .get()
+            .ok_or_else(|| std::io::Error::other("logger initialization failed"))
     }
 
     pub fn global() -> Option<&'static Self> {
