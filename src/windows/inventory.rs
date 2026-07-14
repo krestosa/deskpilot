@@ -2,15 +2,17 @@ use crate::config::Config;
 use crate::reconciliation::{DesktopId, DesktopState, Occupancy};
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::mem::size_of;
+use std::mem::{size_of, zeroed};
 use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, RECT};
 use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
 use windows_sys::Win32::System::ProcessStatus::K32GetModuleFileNameExW;
 use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetForegroundWindow, GetMonitorInfoW, GetWindow, GetWindowLongPtrW,
-    GetWindowRect, GetWindowThreadProcessId, IsWindow, IsWindowVisible, MonitorFromWindow,
-    GWL_EXSTYLE, GW_OWNER, MONITORINFO, MONITOR_DEFAULTTONEAREST, WS_EX_NOACTIVATE,
+    EnumWindows, GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowRect,
+    GetWindowThreadProcessId, IsWindow, IsWindowVisible, GWL_EXSTYLE, GW_OWNER, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW,
 };
 
@@ -102,7 +104,7 @@ pub fn exclusive_fullscreen_active() -> bool {
         if hwnd == 0 {
             return false;
         }
-        let mut window_rect = RECT::default();
+        let mut window_rect: RECT = zeroed();
         if GetWindowRect(hwnd, &mut window_rect) == 0 {
             return false;
         }
@@ -112,8 +114,8 @@ pub fn exclusive_fullscreen_active() -> bool {
         }
         let mut info = MONITORINFO {
             cbSize: size_of::<MONITORINFO>() as u32,
-            rcMonitor: RECT::default(),
-            rcWork: RECT::default(),
+            rcMonitor: zeroed(),
+            rcWork: zeroed(),
             dwFlags: 0,
         };
         if GetMonitorInfoW(monitor, &mut info) == 0 {
