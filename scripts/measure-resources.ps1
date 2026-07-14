@@ -13,7 +13,7 @@ New-Item -ItemType Directory -Path $dataDir | Out-Null
 $args = @('--data-dir', $dataDir, 'run', '--foreground', '--no-tray')
 if ($SafeMode) { $args += @('--no-hook', '--no-dynamic') }
 
-# Function purpose: Performs the Invoke DeskPilotRaw operation required by this module.
+# Function purpose: Runs one DeskPilot command against the isolated measurement data directory and returns its exit code and captured output.
 function Invoke-DeskPilotRaw {
     param([string[]]$Arguments)
     $start = [System.Diagnostics.ProcessStartInfo]::new()
