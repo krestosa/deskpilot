@@ -10,6 +10,7 @@
 - bounded create/remove failures and duplicate events;
 - wheel accumulation, direction, cooldown, clamp and wrap;
 - strict TOML parsing, ranges, version defaults and atomic persistence;
+- native Windows version detection and rejection of manifest-virtualized `6.2.9200` values;
 - CLI hierarchy, JSON flag and safe run modes.
 
 `DeskPilot.exe self-test --backend mock` provides a packaged smoke check without touching real desktops.

@@ -20,7 +20,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, GetShellWindow};
 
 use super::util::wide;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WindowsVersion {
     pub major: u32,
     pub minor: u32,
@@ -28,25 +28,54 @@ pub struct WindowsVersion {
     pub revision: u32,
 }
 
+#[repr(C)]
+struct RtlOsVersionInfoW {
+    size: u32,
+    major: u32,
+    minor: u32,
+    build: u32,
+    platform_id: u32,
+    service_pack: [u16; 128],
+}
+
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    #[link_name = "RtlGetVersion"]
+    fn rtl_get_version(version_information: *mut RtlOsVersionInfoW) -> i32;
+}
+
 pub fn windows_version() -> WindowsVersion {
+    let revision = read_ubr().unwrap_or(0);
+    let mut version = rtl_windows_version()
+        .or_else(legacy_windows_version)
+        .unwrap_or_default();
+    version.revision = revision;
+    version
+}
+
+fn rtl_windows_version() -> Option<WindowsVersion> {
+    unsafe {
+        let mut info: RtlOsVersionInfoW = zeroed();
+        info.size = size_of::<RtlOsVersionInfoW>() as u32;
+        (rtl_get_version(&mut info) == 0).then_some(WindowsVersion {
+            major: info.major,
+            minor: info.minor,
+            build: info.build,
+            revision: 0,
+        })
+    }
+}
+
+fn legacy_windows_version() -> Option<WindowsVersion> {
     unsafe {
         let mut info: OSVERSIONINFOW = zeroed();
         info.dwOSVersionInfoSize = size_of::<OSVERSIONINFOW>() as u32;
-        if GetVersionExW(&mut info) != 0 {
-            WindowsVersion {
-                major: info.dwMajorVersion,
-                minor: info.dwMinorVersion,
-                build: info.dwBuildNumber,
-                revision: read_ubr().unwrap_or(0),
-            }
-        } else {
-            WindowsVersion {
-                major: 0,
-                minor: 0,
-                build: 0,
-                revision: 0,
-            }
-        }
+        (GetVersionExW(&mut info) != 0).then_some(WindowsVersion {
+            major: info.dwMajorVersion,
+            minor: info.dwMinorVersion,
+            build: info.dwBuildNumber,
+            revision: 0,
+        })
     }
 }
 
@@ -207,4 +236,22 @@ unsafe fn token_user_sid(token: HANDLE) -> Result<String, String> {
         String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(sid_string, length) });
     unsafe { LocalFree(sid_string as HLOCAL) };
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::windows_version;
+
+    #[test]
+    fn native_version_detection_is_not_manifest_virtualized() {
+        let version = windows_version();
+        assert_eq!(
+            version.major, 10,
+            "expected native Windows 10/11 major version, got {version:?}"
+        );
+        assert!(
+            version.build >= 22_000,
+            "DeskPilot tests require Windows 11 or later, got {version:?}"
+        );
+    }
 }
