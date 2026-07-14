@@ -16,7 +16,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOOLWINDOW,
 };
 
-use super::desktops::WinvdBackend;
+use super::desktops::{DesktopInfo, WinvdBackend};
 use super::system::current_process_id;
 use super::util::from_wide;
 
@@ -36,66 +36,36 @@ pub fn snapshot(
         let Some(identity) = inspect_identity(hwnd) else {
             continue;
         };
-        if identity.process_id == current_process_id() || ignored_class(&identity.class_name) {
-            continue;
-        }
-        if !is_eligible_application_window(hwnd) {
-            continue;
-        }
-        if config
-            .windows
-            .ignore_classes
-            .iter()
-            .any(|value| value.eq_ignore_ascii_case(&identity.class_name))
-        {
-            continue;
-        }
-
-        let executable = match executable_name(identity.process_id) {
-            Ok(executable) => executable,
-            Err(_) => {
-                mark_unmapped_candidate_unknown(
-                    &mut occupancy,
-                    &current.id,
-                    window_is_cloaked(hwnd),
-                );
-                continue;
-            }
-        };
-        if ignored_shell_executable(&executable)
+        if identity.process_id == current_process_id()
+            || ignored_class(&identity.class_name)
             || config
                 .windows
-                .ignore_executables
+                .ignore_classes
                 .iter()
-                .any(|value| value.eq_ignore_ascii_case(&executable))
+                .any(|value| value.eq_ignore_ascii_case(&identity.class_name))
+            || !is_eligible_application_window(hwnd)
         {
             continue;
         }
 
-        let desktop = match backend.desktop_for_window(hwnd) {
-            Ok(desktop) => desktop,
-            Err(_) => {
-                mark_unmapped_candidate_unknown(
-                    &mut occupancy,
-                    &current.id,
-                    window_is_cloaked(hwnd),
-                );
+        if let Ok(executable) = executable_name(identity.process_id) {
+            if ignored_shell_executable(&executable)
+                || config
+                    .windows
+                    .ignore_executables
+                    .iter()
+                    .any(|value| value.eq_ignore_ascii_case(&executable))
+            {
                 continue;
             }
-        };
-        if !occupancy.contains_key(&desktop) {
+        }
+
+        if backend.is_window_pinned(hwnd).is_ok_and(|pinned| pinned) {
             continue;
         }
 
-        match backend.is_window_pinned(hwnd) {
-            Ok(true) => continue,
-            Err(_) => {
-                occupancy.insert(desktop, Occupancy::Unknown);
-                continue;
-            }
-            Ok(false) => {
-                occupancy.insert(desktop, Occupancy::Occupied);
-            }
+        if let Some(desktop) = locate_window_desktop(backend, &desktops, hwnd) {
+            occupancy.insert(desktop, Occupancy::Occupied);
         }
     }
 
@@ -104,10 +74,32 @@ pub fn snapshot(
         .map(|desktop| DesktopState {
             current: desktop.id == current.id,
             empty_grace_elapsed: grace.get(&desktop.id).copied().unwrap_or(false),
-            occupancy: occupancy.remove(&desktop.id).unwrap_or(Occupancy::Unknown),
+            occupancy: occupancy.remove(&desktop.id).unwrap_or(Occupancy::Empty),
             id: desktop.id,
         })
         .collect())
+}
+
+fn locate_window_desktop(
+    backend: &WinvdBackend,
+    desktops: &[DesktopInfo],
+    hwnd: HWND,
+) -> Option<DesktopId> {
+    if let Ok(desktop) = backend.desktop_for_window(hwnd) {
+        if desktops.iter().any(|candidate| candidate.id == desktop) {
+            return Some(desktop);
+        }
+    }
+
+    let mut matched = None;
+    for desktop in desktops {
+        match backend.is_window_on_desktop(hwnd, &desktop.id) {
+            Ok(true) if matched.is_none() => matched = Some(desktop.id.clone()),
+            Ok(true) => return None,
+            Ok(false) | Err(_) => {}
+        }
+    }
+    matched
 }
 
 pub fn exclusive_fullscreen_active() -> bool {
@@ -245,24 +237,6 @@ fn executable_name(process_id: u32) -> Result<String, String> {
     }
 }
 
-fn mark_unmapped_candidate_unknown(
-    occupancy: &mut HashMap<DesktopId, Occupancy>,
-    current: &DesktopId,
-    cloaked: bool,
-) {
-    if cloaked {
-        for (desktop, state) in occupancy.iter_mut() {
-            if desktop != current && *state == Occupancy::Empty {
-                *state = Occupancy::Unknown;
-            }
-        }
-    } else if let Some(state) = occupancy.get_mut(current) {
-        if *state == Occupancy::Empty {
-            *state = Occupancy::Unknown;
-        }
-    }
-}
-
 fn rect_covers(window: RECT, monitor: RECT) -> bool {
     window.left <= monitor.left
         && window.top <= monitor.top
@@ -274,6 +248,8 @@ fn ignored_shell_executable(executable: &str) -> bool {
     const EXECUTABLES: &[&str] = &[
         "backgroundTaskHost.exe",
         "ctfmon.exe",
+        "dwm.exe",
+        "explorer.exe",
         "LockApp.exe",
         "RuntimeBroker.exe",
         "SearchHost.exe",
@@ -324,11 +300,7 @@ fn ignored_class(class_name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ignored_class, ignored_shell_executable, mark_unmapped_candidate_unknown, rect_covers,
-    };
-    use crate::reconciliation::{DesktopId, Occupancy};
-    use std::collections::HashMap;
+    use super::{ignored_class, ignored_shell_executable, rect_covers};
     use windows_sys::Win32::Foundation::RECT;
 
     #[test]
@@ -339,33 +311,8 @@ mod tests {
         assert!(ignored_shell_executable("StartMenuExperienceHost.exe"));
         assert!(ignored_shell_executable("searchhost.EXE"));
         assert!(ignored_shell_executable("RuntimeBroker.exe"));
+        assert!(ignored_shell_executable("explorer.exe"));
         assert!(!ignored_shell_executable("notepad.exe"));
-    }
-
-    #[test]
-    fn visible_unmapped_candidate_only_blocks_current_desktop() {
-        let current = DesktopId("current".to_string());
-        let other = DesktopId("other".to_string());
-        let mut occupancy = HashMap::from([
-            (current.clone(), Occupancy::Empty),
-            (other.clone(), Occupancy::Empty),
-        ]);
-        mark_unmapped_candidate_unknown(&mut occupancy, &current, false);
-        assert_eq!(occupancy[&current], Occupancy::Unknown);
-        assert_eq!(occupancy[&other], Occupancy::Empty);
-    }
-
-    #[test]
-    fn cloaked_unmapped_candidate_only_blocks_non_current_desktops() {
-        let current = DesktopId("current".to_string());
-        let other = DesktopId("other".to_string());
-        let mut occupancy = HashMap::from([
-            (current.clone(), Occupancy::Empty),
-            (other.clone(), Occupancy::Empty),
-        ]);
-        mark_unmapped_candidate_unknown(&mut occupancy, &current, true);
-        assert_eq!(occupancy[&current], Occupancy::Empty);
-        assert_eq!(occupancy[&other], Occupancy::Unknown);
     }
 
     #[test]
