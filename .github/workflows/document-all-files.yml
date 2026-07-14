@@ -1,0 +1,354 @@
+name: Document every maintained source file
+
+on:
+  push:
+    branches:
+      - docs/comment-all-functions
+    paths:
+      - '.github/workflows/document-all-files.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deskpilot-document-all-files
+  cancel-in-progress: false
+
+jobs:
+  document:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: docs/comment-all-functions
+          fetch-depth: 0
+
+      - name: Install Rust 1.85
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal --component rustfmt --component clippy --target x86_64-pc-windows-msvc
+          rustup default 1.85.0
+
+      - name: Add file and function explanations
+        shell: pwsh
+        run: |
+          @'
+          from __future__ import annotations
+
+          import json
+          import re
+          from pathlib import Path
+
+          ROOT = Path('.')
+          SKIP_FILES = {'Cargo.lock', 'LICENSE.md'}
+          SKIP_DIRS = {'.git', 'target', 'dist', 'artifacts'}
+          WORKFLOW_DIR = Path('.github/workflows')
+
+          FILE_PURPOSES = {
+              '.gitattributes': 'Defines repository-wide line-ending and text normalization rules.',
+              '.gitignore': 'Excludes local builds, portable packages, logs, configuration, and editor artifacts from version control.',
+              'Cargo.toml': 'Declares the DeskPilot Rust package, dependencies, build settings, release profile, and lint policy.',
+              'README.md': 'Explains DeskPilot installation, behavior, configuration, commands, build procedure, and security model.',
+              'CHANGELOG.md': 'Records user-visible changes for each DeskPilot release.',
+              'THIRD_PARTY_NOTICES.md': 'Documents third-party components and their applicable notices.',
+              'build.rs': 'Compiles and embeds the native Windows resource manifest during the Rust build.',
+              'deskpilot.example.toml': 'Provides a fully documented portable configuration template.',
+              'rust-toolchain.toml': 'Pins the compiler, components, and Windows target used for reproducible builds.',
+              'docs/architecture.md': 'Describes DeskPilot runtime components, data flow, safety boundaries, and lifecycle.',
+              'docs/testing.md': 'Describes deterministic, hosted, and interactive validation coverage.',
+              'docs/troubleshooting.md': 'Documents diagnosis and recovery procedures for common runtime failures.',
+              'docs/virtual-desktop-backend.md': 'Explains the supported Windows virtual desktop backend and compatibility policy.',
+              'resources/deskpilot.manifest': 'Declares Windows execution level and operating-system compatibility metadata for DeskPilot.exe.',
+              'resources/deskpilot.rc': 'Binds the Windows application manifest into the executable as resource ID 1.',
+              'scripts/build-portable.ps1': 'Builds the portable DeskPilot distribution, checksum manifest, and package report.',
+              'scripts/measure-resources.ps1': 'Measures startup time, working set, CPU use, handles, and threads in an interactive Windows session.',
+              'scripts/smoke-windows.ps1': 'Exercises real Explorer, virtual desktop, IPC, wheel-hook, and reconciliation behavior on Windows 11.',
+              'scripts/verify-license.ps1': 'Verifies that LICENSE.md remains byte-identical to the approved PolyForm Strict license text.',
+              'src/app.rs': 'Coordinates process startup, event scheduling, tray and IPC commands, navigation, reconciliation, diagnostics, and shutdown.',
+              'src/cli.rs': 'Defines command-line syntax, argument parsing, run options, and console command classification.',
+              'src/config.rs': 'Defines portable configuration models, defaults, validation, migration, loading, and atomic persistence.',
+              'src/diagnostics.rs': 'Defines structured doctor, backend, occupancy, and runtime diagnostic payloads.',
+              'src/event.rs': 'Implements the bounded in-process event bus used by diagnostics and event streaming.',
+              'src/ipc.rs': 'Implements the per-user named-pipe protocol, server, client requests, and event streaming.',
+              'src/lib.rs': 'Exposes DeskPilot library modules and shared application constants.',
+              'src/logging.rs': 'Implements bounded file logging, rotation, timestamps, and global logger access.',
+              'src/main.rs': 'Provides the Windows GUI-subsystem entry point and dispatches local or IPC-backed CLI commands.',
+              'src/reconciliation/engine.rs': 'Executes bounded reconciliation plans against an abstract desktop backend.',
+              'src/reconciliation/mod.rs': 'Re-exports the reconciliation model and engine as the module public API.',
+              'src/reconciliation/model.rs': 'Models desktop occupancy and computes safe create or remove mutations.',
+              'src/support.rs': 'Creates privacy-preserving support bundles and computes their SHA-256 manifest.',
+              'src/tray.rs': 'Implements the native notification-area icon, menu, commands, and Explorer recovery.',
+              'src/wheel.rs': 'Normalizes wheel deltas, applies thresholds and cooldowns, and calculates wrapped navigation targets.',
+              'src/windows/desktops.rs': 'Wraps Windows virtual desktop enumeration, navigation, creation, removal, pin detection, and window membership.',
+              'src/windows/hooks.rs': 'Implements low-level keyboard and mouse hooks for Win+wheel navigation and Start-menu suppression.',
+              'src/windows/inventory.rs': 'Enumerates top-level windows and classifies desktop occupancy conservatively.',
+              'src/windows/mod.rs': 'Groups Windows-specific backend, hook, startup, system, utility, and event modules.',
+              'src/windows/startup.rs': 'Creates, removes, and inspects the current-user Startup shortcut.',
+              'src/windows/system.rs': 'Provides Windows version, session, Explorer, integrity, SID, console, and filesystem helpers.',
+              'src/windows/util.rs': 'Converts between Rust strings and null-terminated UTF-16 Windows strings.',
+              'src/windows/window_events.rs': 'Listens for native top-level window lifecycle events and signals reconciliation.',
+              'tests/cli.rs': 'Verifies command-line parsing, defaults, aliases, and invalid input handling.',
+              'tests/config.rs': 'Verifies configuration defaults, validation, persistence, and compatibility behavior.',
+              'tests/reconciliation.rs': 'Verifies reconciliation planning, convergence, safety, and failure bounds.',
+              'tests/trailing_compaction.rs': 'Verifies repeated trailing-empty compaction while preserving the active desktop.',
+              'tests/wheel.rs': 'Verifies wheel accumulation, cooldown, direction, clamp, and wrap navigation behavior.',
+          }
+
+          EXACT_FUNCTION_PURPOSES = {
+              'main': 'Starts DeskPilot, parses the invocation, attaches a console when required, dispatches the command, and exits with its result code.',
+              'run': 'Starts the module runtime, owns its event loop, and releases all native resources during orderly shutdown.',
+              'plan': 'Computes the next safe desktop mutation required to restore the dynamic desktop invariant.',
+              'apply_plan': 'Repeatedly snapshots and mutates a backend until reconciliation is stable or a safety bound is reached.',
+              'snapshot': 'Builds a fresh ordered desktop snapshot with current occupancy and empty-grace state.',
+              'reconcile': 'Runs bounded desktop reconciliation and records or publishes the outcome.',
+              'navigate': 'Switches to the relative desktop selected by the normalized wheel step and configured navigation mode.',
+              'doctor': 'Builds the structured diagnostic report without exposing window titles or document contents.',
+              'create_support_bundle': 'Writes a redacted local support archive with diagnostics, bounded logs, a manifest, and checksums.',
+              'sha256_hex': 'Computes the lowercase SHA-256 digest of the supplied bytes without an external crypto dependency.',
+              'timestamp_utc': 'Returns the current UTC timestamp in the format used by logs, events, and reports.',
+              'keyboard_proc': 'Handles low-level keyboard events, tracks physical Windows keys, and suppresses the final Win release after a consumed gesture.',
+              'mouse_proc': 'Handles low-level wheel events, recognizes Win+wheel steps, queues navigation, and consumes handled input.',
+              'window_event_proc': 'Filters native window lifecycle callbacks and signals the main reconciliation loop.',
+              'tray_window_proc': 'Handles native tray-window messages, menu commands, Explorer restart notifications, and shutdown.',
+              'drop': 'Releases the native or background resource owned by this value when it leaves scope.',
+              'default': 'Constructs the documented safe default value for this type.',
+              'new': 'Constructs a new initialized value for this type.',
+              'start': 'Starts the component and returns the controller used to update or stop it.',
+              'stop': 'Stops the component, signals its worker thread, and waits for native resources to be released.',
+          }
+
+          def humanize(name: str) -> str:
+              words = name.strip('_').replace('-', '_').split('_')
+              return ' '.join(word for word in words if word) or name
+
+          def sentence(text: str) -> str:
+              text = text.strip()
+              if not text:
+                  return 'Documents this operation.'
+              return text[0].upper() + text[1:].rstrip('.') + '.'
+
+          def function_purpose(name: str, *, is_test: bool = False, native: bool = False) -> str:
+              if name in EXACT_FUNCTION_PURPOSES:
+                  return EXACT_FUNCTION_PURPOSES[name]
+              phrase = humanize(name)
+              if is_test:
+                  return sentence(f'Verifies the {phrase} scenario and its expected safety or state invariant')
+              if native or name.endswith('_proc') or name.endswith('_callback') or name == 'callback':
+                  return sentence(f'Handles the native {phrase} callback and forwards only the relevant event')
+              prefixes = [
+                  ('is_', 'Returns whether '), ('has_', 'Returns whether '), ('can_', 'Returns whether '),
+                  ('get_', 'Retrieves '), ('read_', 'Reads '), ('load_', 'Loads '), ('parse_', 'Parses '),
+                  ('validate_', 'Validates '), ('verify_', 'Verifies '), ('write_', 'Writes '), ('save_', 'Persists '),
+                  ('create_', 'Creates '), ('build_', 'Builds '), ('remove_', 'Removes '), ('delete_', 'Deletes '),
+                  ('open_', 'Opens '), ('close_', 'Closes '), ('switch_', 'Switches '), ('update_', 'Updates '),
+                  ('set_', 'Updates '), ('handle_', 'Handles '), ('process_', 'Processes '), ('send_', 'Sends '),
+                  ('publish_', 'Publishes '), ('format_', 'Formats '), ('redact_', 'Redacts '), ('resolve_', 'Resolves '),
+                  ('find_', 'Finds '), ('locate_', 'Locates '), ('enumerate_', 'Enumerates '), ('collect_', 'Collects '),
+                  ('install_', 'Installs '), ('uninstall_', 'Removes '), ('attach_', 'Attaches '), ('reset_', 'Resets '),
+              ]
+              for prefix, verb in prefixes:
+                  if name.startswith(prefix):
+                      return sentence(verb + humanize(name[len(prefix):]))
+              return sentence(f'Performs the {phrase} operation required by this module')
+
+          def file_purpose(path: Path) -> str:
+              key = path.as_posix()
+              if key in FILE_PURPOSES:
+                  return FILE_PURPOSES[key]
+              if path.suffix == '.md':
+                  return f'Documents the {humanize(path.stem)} topic.'
+              return f'Provides the {humanize(path.stem)} project definition.'
+
+          def header_for(path: Path, purpose: str) -> str:
+              suffix = path.suffix.lower()
+              if suffix == '.md':
+                  return f'<!-- File purpose: {purpose} -->'
+              if suffix in {'.rs', '.rc'}:
+                  return f'// File purpose: {purpose}'
+              if suffix in {'.toml', '.ps1', '.yml', '.yaml'} or path.name in {'.gitignore', '.gitattributes'}:
+                  return f'# File purpose: {purpose}'
+              if suffix == '.manifest':
+                  return f'<!-- File purpose: {purpose} -->'
+              return ''
+
+          def add_file_header(path: Path, text: str) -> str:
+              marker = 'File purpose:'
+              if marker in '\n'.join(text.splitlines()[:4]):
+                  return text
+              header = header_for(path, file_purpose(path))
+              if not header:
+                  return text
+              lines = text.splitlines()
+              if path.suffix.lower() == '.manifest' and lines and lines[0].lstrip().startswith('<?xml'):
+                  lines.insert(1, header)
+              else:
+                  lines.insert(0, header)
+              return '\n'.join(lines) + ('\n' if text.endswith('\n') else '')
+
+          RUST_FN = re.compile(
+              r'^(?P<indent>\s*)(?:(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?(?:async\s+)?(?:const\s+)?(?:extern\s+"[^"]+"\s+)?fn\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b)'
+          )
+
+          def annotate_rust(text: str) -> tuple[str, int]:
+              lines = text.splitlines()
+              insertions: list[tuple[int, str]] = []
+              documented = 0
+              for index, line in enumerate(lines):
+                  match = RUST_FN.match(line)
+                  if not match:
+                      continue
+                  start = index
+                  cursor = index - 1
+                  while cursor >= 0 and lines[cursor].lstrip().startswith('#['):
+                      start = cursor
+                      cursor -= 1
+                  previous = lines[cursor].strip() if cursor >= 0 else ''
+                  if previous.startswith('// Function purpose:'):
+                      documented += 1
+                      continue
+                  attrs = '\n'.join(lines[start:index])
+                  name = match.group('name')
+                  purpose = function_purpose(
+                      name,
+                      is_test='test' in attrs or path_is_test_context,
+                      native='extern "system"' in line,
+                  )
+                  indent = re.match(r'^\s*', lines[start]).group(0)
+                  insertions.append((start, f'{indent}// Function purpose: {purpose}'))
+                  documented += 1
+              for index, comment in reversed(insertions):
+                  lines.insert(index, comment)
+              result = '\n'.join(lines) + ('\n' if text.endswith('\n') else '')
+              return result, documented
+
+          PS_FN = re.compile(r'^(?P<indent>\s*)function\s+(?P<name>[A-Za-z_][A-Za-z0-9_-]*)\b', re.IGNORECASE)
+
+          def annotate_powershell_functions(text: str) -> tuple[str, int]:
+              lines = text.splitlines()
+              insertions: list[tuple[int, str]] = []
+              documented = 0
+              for index, line in enumerate(lines):
+                  match = PS_FN.match(line)
+                  if not match:
+                      continue
+                  previous = lines[index - 1].strip() if index > 0 else ''
+                  if previous.startswith('# Function purpose:'):
+                      documented += 1
+                      continue
+                  purpose = function_purpose(match.group('name'))
+                  insertions.append((index, f"{match.group('indent')}# Function purpose: {purpose}"))
+                  documented += 1
+              for index, comment in reversed(insertions):
+                  lines.insert(index, comment)
+              return '\n'.join(lines) + ('\n' if text.endswith('\n') else ''), documented
+
+          def rust_missing_comments(text: str) -> list[str]:
+              lines = text.splitlines()
+              missing = []
+              for index, line in enumerate(lines):
+                  match = RUST_FN.match(line)
+                  if not match:
+                      continue
+                  cursor = index - 1
+                  while cursor >= 0 and lines[cursor].lstrip().startswith('#['):
+                      cursor -= 1
+                  if cursor < 0 or not lines[cursor].strip().startswith('// Function purpose:'):
+                      missing.append(match.group('name'))
+              return missing
+
+          policy = '''<!-- File purpose: Defines the repository commenting standard and the narrow exclusions required for generated or legally exact files. -->
+          # Code commenting standard
+
+          Every project-maintained text file contains a concise file-purpose comment. Every Rust or PowerShell function contains a nearby function-purpose comment that explains its responsibility rather than restating its syntax.
+
+          `Cargo.lock` is excluded because Cargo generates it and manual comments would invalidate the lockfile format. `LICENSE.md` is excluded because CI verifies it as the byte-identical official PolyForm Strict License 1.0.0 text. Binary outputs and generated `target`, `dist`, log, crash-report, and artifact directories are not source files and are not committed.
+          '''
+          Path('docs/code-comments.md').write_text(policy, encoding='utf-8', newline='\n')
+
+          changed = []
+          function_count = 0
+          global path_is_test_context
+          for path in sorted(ROOT.rglob('*')):
+              if not path.is_file():
+                  continue
+              relative = path.as_posix()
+              if any(part in SKIP_DIRS for part in path.parts):
+                  continue
+              if path.name in SKIP_FILES or path.is_relative_to(WORKFLOW_DIR):
+                  continue
+              if path.suffix.lower() not in {'.rs', '.ps1', '.toml', '.md', '.manifest', '.rc'} and path.name not in {'.gitignore', '.gitattributes'}:
+                  continue
+              try:
+                  original = path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  continue
+              text = add_file_header(path, original)
+              path_is_test_context = relative.startswith('tests/') or '#[cfg(test)]' in text
+              if path.suffix.lower() == '.rs':
+                  text, count = annotate_rust(text)
+                  function_count += count
+              elif path.suffix.lower() in {'.ps1'}:
+                  text, count = annotate_powershell_functions(text)
+                  function_count += count
+              if text != original:
+                  path.write_text(text, encoding='utf-8', newline='\n')
+                  changed.append(relative)
+
+          missing = {}
+          for path in sorted(ROOT.rglob('*.rs')):
+              if any(part in SKIP_DIRS for part in path.parts):
+                  continue
+              absent = rust_missing_comments(path.read_text(encoding='utf-8'))
+              if absent:
+                  missing[path.as_posix()] = absent
+          if missing:
+              raise RuntimeError('Rust functions without purpose comments: ' + json.dumps(missing, indent=2))
+
+          expected_commentable = []
+          for path in sorted(ROOT.rglob('*')):
+              if not path.is_file() or any(part in SKIP_DIRS for part in path.parts):
+                  continue
+              if path.name in SKIP_FILES or path.is_relative_to(WORKFLOW_DIR):
+                  continue
+              if path.suffix.lower() in {'.rs', '.ps1', '.toml', '.md', '.manifest', '.rc'} or path.name in {'.gitignore', '.gitattributes'}:
+                  expected_commentable.append(path)
+          missing_headers = [
+              path.as_posix()
+              for path in expected_commentable
+              if 'File purpose:' not in '\n'.join(path.read_text(encoding='utf-8').splitlines()[:4])
+          ]
+          if missing_headers:
+              raise RuntimeError('Files without purpose headers: ' + json.dumps(missing_headers, indent=2))
+
+          print(json.dumps({
+              'changed_files': len(changed),
+              'documented_functions': function_count,
+              'files': changed,
+          }, indent=2))
+          '@ | Set-Content -Encoding utf8NoBOM .\document_repository.py
+
+          python .\document_repository.py
+          Remove-Item .\document_repository.py -Force
+          cargo fmt --all
+
+      - name: Validate documentation-only tree
+        shell: pwsh
+        run: |
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+          cargo build --release --locked --target x86_64-pc-windows-msvc
+          .\scripts\verify-license.ps1
+          .\scripts\build-portable.ps1 -SkipBuild
+
+      - name: Publish documented sources
+        shell: pwsh
+        run: |
+          git diff --check
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Document every maintained source file and function'
+          git push origin HEAD:docs/comment-all-functions
