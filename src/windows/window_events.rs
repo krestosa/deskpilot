@@ -1,3 +1,4 @@
+// File purpose: Listens for native top-level window lifecycle events and signals reconciliation.
 use std::mem::zeroed;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
@@ -20,6 +21,7 @@ pub struct WindowEventController {
 }
 
 impl WindowEventController {
+    // Function purpose: Starts the component and returns the controller used to update or stop it.
     pub fn start(sender: Sender<()>) -> Result<Self, String> {
         EVENT_SENDER
             .set(sender)
@@ -38,6 +40,7 @@ impl WindowEventController {
         })
     }
 
+    // Function purpose: Stops the component, signals its worker thread, and waits for native resources to be released.
     pub fn stop(&mut self) {
         let thread_id = self.thread_id.load(Ordering::Acquire);
         if thread_id != 0 {
@@ -50,11 +53,13 @@ impl WindowEventController {
 }
 
 impl Drop for WindowEventController {
+    // Function purpose: Releases the native or background resource owned by this value when it leaves scope.
     fn drop(&mut self) {
         self.stop();
     }
 }
 
+// Function purpose: Performs the run loop operation required by this module.
 fn run_loop(ready: Sender<Result<u32, String>>) -> Result<(), String> {
     unsafe {
         let hook = SetWinEventHook(
@@ -83,6 +88,7 @@ fn run_loop(ready: Sender<Result<u32, String>>) -> Result<(), String> {
     Ok(())
 }
 
+// Function purpose: Filters native window lifecycle callbacks and signals the main reconciliation loop.
 unsafe extern "system" fn window_event_proc(
     _hook: HWINEVENTHOOK,
     _event: u32,

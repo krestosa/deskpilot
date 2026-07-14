@@ -1,3 +1,4 @@
+// File purpose: Implements the bounded in-process event bus used by diagnostics and event streaming.
 use serde::Serialize;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Mutex;
@@ -12,6 +13,7 @@ pub struct Event {
 }
 
 impl Event {
+    // Function purpose: Constructs a new initialized value for this type.
     pub fn new(kind: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             timestamp: timestamp_utc(),
@@ -27,6 +29,7 @@ pub struct EventBus {
 }
 
 impl EventBus {
+    // Function purpose: Performs the subscribe operation required by this module.
     pub fn subscribe(&self) -> Receiver<Event> {
         let (sender, receiver) = mpsc::channel();
         if let Ok(mut subscribers) = self.subscribers.lock() {
@@ -35,6 +38,7 @@ impl EventBus {
         receiver
     }
 
+    // Function purpose: Performs the publish operation required by this module.
     pub fn publish(&self, event: Event) {
         if let Ok(mut subscribers) = self.subscribers.lock() {
             subscribers.retain(|subscriber| subscriber.send(event.clone()).is_ok());

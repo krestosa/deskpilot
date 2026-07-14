@@ -1,3 +1,4 @@
+// File purpose: Normalizes wheel deltas, applies thresholds and cooldowns, and calculates wrapped navigation targets.
 use crate::config::{NavigationMode, WheelDirection};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +14,7 @@ pub struct WheelState {
 }
 
 impl WheelState {
+    // Function purpose: Performs the feed operation required by this module.
     pub fn feed(
         &mut self,
         delta: i32,
@@ -44,11 +46,13 @@ impl WheelState {
         })
     }
 
+    // Function purpose: Performs the reset operation required by this module.
     pub fn reset(&mut self) {
         self.accumulator = 0;
     }
 }
 
+// Function purpose: Performs the target index operation required by this module.
 pub fn target_index(
     current: usize,
     count: usize,

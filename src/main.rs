@@ -1,3 +1,4 @@
+// File purpose: Provides the Windows GUI-subsystem entry point and dispatches local or IPC-backed CLI commands.
 #![windows_subsystem = "windows"]
 
 use deskpilot::cli::{Command, Invocation, HELP};
@@ -16,6 +17,7 @@ use windows_sys::Win32::System::Console::{
     STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
 };
 
+// Function purpose: Starts DeskPilot, parses the invocation, attaches a console when required, dispatches the command, and exits with its result code.
 fn main() {
     let invocation = match Invocation::parse(std::env::args()) {
         Ok(invocation) => invocation,
@@ -33,6 +35,7 @@ fn main() {
     std::process::exit(code);
 }
 
+// Function purpose: Performs the execute operation required by this module.
 fn execute(invocation: Invocation, data_dir: PathBuf) -> i32 {
     match invocation.command {
         Command::Run(options) => deskpilot::app::run(data_dir, options)
@@ -105,6 +108,7 @@ fn execute(invocation: Invocation, data_dir: PathBuf) -> i32 {
     }
 }
 
+// Function purpose: Performs the command name operation required by this module.
 fn command_name(command: &Command) -> String {
     match command {
         Command::Status => "status",
@@ -132,6 +136,7 @@ fn command_name(command: &Command) -> String {
     .to_string()
 }
 
+// Function purpose: Performs the self test operation required by this module.
 fn self_test(backend: Option<&str>, json: bool) -> i32 {
     if backend.is_some_and(|value| value != "mock") {
         return fail(64, "only --backend mock is supported by self-test", json);
@@ -174,6 +179,7 @@ fn self_test(backend: Option<&str>, json: bool) -> i32 {
     }
 }
 
+// Function purpose: Resolves data dir.
 fn resolve_data_dir(explicit: Option<&Path>) -> PathBuf {
     if let Some(path) = explicit {
         return absolute(path);
@@ -184,6 +190,7 @@ fn resolve_data_dir(explicit: Option<&Path>) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+// Function purpose: Performs the absolute operation required by this module.
 fn absolute(path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
@@ -192,6 +199,7 @@ fn absolute(path: &Path) -> PathBuf {
     }
 }
 
+// Function purpose: Attaches console.
 fn attach_console() {
     unsafe {
         let _ = AttachConsole(ATTACH_PARENT_PROCESS);
@@ -201,6 +209,7 @@ fn attach_console() {
     }
 }
 
+// Function purpose: Performs the repair standard handle operation required by this module.
 unsafe fn repair_standard_handle(kind: u32) {
     let current = unsafe { GetStdHandle(kind) };
     if current != 0 && current != INVALID_HANDLE_VALUE {
@@ -223,6 +232,7 @@ unsafe fn repair_standard_handle(kind: u32) {
     }
 }
 
+// Function purpose: Performs the print human operation required by this module.
 fn print_human(value: &serde_json::Value) {
     match value {
         serde_json::Value::String(text) => println!("{text}"),
@@ -240,6 +250,7 @@ fn print_human(value: &serde_json::Value) {
     }
 }
 
+// Function purpose: Performs the fail operation required by this module.
 fn fail(code: i32, message: &str, json: bool) -> i32 {
     if json {
         eprintln!(

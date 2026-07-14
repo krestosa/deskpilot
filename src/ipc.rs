@@ -1,3 +1,4 @@
+// File purpose: Implements the per-user named-pipe protocol, server, client requests, and event streaming.
 use crate::event::EventBus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -47,6 +48,7 @@ pub struct IpcResponse {
 }
 
 impl IpcResponse {
+    // Function purpose: Performs the success operation required by this module.
     pub fn success(data: impl Serialize) -> Self {
         match serde_json::to_value(data) {
             Ok(value) => Self {
@@ -59,10 +61,12 @@ impl IpcResponse {
         }
     }
 
+    // Function purpose: Performs the message operation required by this module.
     pub fn message(message: impl Into<String>) -> Self {
         Self::success(serde_json::json!({ "message": message.into() }))
     }
 
+    // Function purpose: Performs the failure operation required by this module.
     pub fn failure(code: i32, error: impl Into<String>) -> Self {
         Self {
             ok: false,
@@ -86,6 +90,7 @@ pub struct IpcServer {
 }
 
 impl IpcServer {
+    // Function purpose: Starts the component and returns the controller used to update or stop it.
     pub fn start(dispatch: Sender<ServerRequest>, events: Arc<EventBus>) -> Result<Self, String> {
         let pipe_name = pipe_name()?;
         let stop = Arc::new(AtomicBool::new(false));
@@ -102,10 +107,12 @@ impl IpcServer {
         })
     }
 
+    // Function purpose: Performs the pipe name operation required by this module.
     pub fn pipe_name(&self) -> &str {
         &self.pipe_name
     }
 
+    // Function purpose: Stops the component, signals its worker thread, and waits for native resources to be released.
     pub fn stop(&mut self) {
         self.stop.store(true, Ordering::Release);
         let _ = send_request(&IpcRequest {
@@ -119,11 +126,13 @@ impl IpcServer {
 }
 
 impl Drop for IpcServer {
+    // Function purpose: Releases the native or background resource owned by this value when it leaves scope.
     fn drop(&mut self) {
         self.stop();
     }
 }
 
+// Function purpose: Sends request.
 pub fn send_request(request: &IpcRequest) -> Result<IpcResponse, String> {
     let name = pipe_name()?;
     let name_wide = wide(&name);
@@ -153,6 +162,7 @@ pub fn send_request(request: &IpcRequest) -> Result<IpcResponse, String> {
     }
 }
 
+// Function purpose: Performs the stream events operation required by this module.
 pub fn stream_events() -> Result<(), String> {
     let name = pipe_name()?;
     let name_wide = wide(&name);
@@ -193,6 +203,7 @@ pub fn stream_events() -> Result<(), String> {
     Ok(())
 }
 
+// Function purpose: Performs the server loop operation required by this module.
 fn server_loop(
     pipe_name: &str,
     dispatch: &Sender<ServerRequest>,
@@ -230,6 +241,7 @@ fn server_loop(
     Ok(())
 }
 
+// Function purpose: Handles client.
 fn handle_client(
     pipe: HANDLE,
     dispatch: Sender<ServerRequest>,
@@ -262,6 +274,7 @@ fn handle_client(
     unsafe { write_message(pipe, &payload) }
 }
 
+// Function purpose: Creates server pipe.
 fn create_server_pipe(name: &str) -> Result<HANDLE, String> {
     let sid = current_user_sid()?;
     let sddl = wide(format!("D:P(A;;GA;;;SY)(A;;GA;;;{sid})"));
@@ -303,11 +316,13 @@ fn create_server_pipe(name: &str) -> Result<HANDLE, String> {
     }
 }
 
+// Function purpose: Performs the pipe name operation required by this module.
 fn pipe_name() -> Result<String, String> {
     let sid = current_user_sid()?;
     Ok(format!(r"\\.\pipe\DeskPilot-{sid}"))
 }
 
+// Function purpose: Writes message.
 unsafe fn write_message(handle: HANDLE, data: &[u8]) -> Result<(), String> {
     if data.len() > MAX_MESSAGE {
         return Err("IPC message exceeds 64 KiB".to_string());
@@ -329,6 +344,7 @@ unsafe fn write_message(handle: HANDLE, data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+// Function purpose: Reads message.
 unsafe fn read_message(handle: HANDLE) -> Result<Vec<u8>, String> {
     let mut buffer = vec![0_u8; MAX_MESSAGE];
     let mut read = 0;

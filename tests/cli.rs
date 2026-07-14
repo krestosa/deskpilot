@@ -1,10 +1,13 @@
+// File purpose: Verifies command-line parsing, defaults, aliases, and invalid input handling.
 use deskpilot::cli::{CliError, Command, Invocation, RunOptions};
 use std::path::PathBuf;
 
+// Function purpose: Verifies the parse scenario and its expected safety or state invariant.
 fn parse(args: &[&str]) -> Invocation {
     Invocation::parse(args.iter().copied()).expect("valid CLI")
 }
 
+// Function purpose: Verifies the no arguments starts tray mode scenario and its expected safety or state invariant.
 #[test]
 fn no_arguments_starts_tray_mode() {
     assert_eq!(
@@ -13,6 +16,7 @@ fn no_arguments_starts_tray_mode() {
     );
 }
 
+// Function purpose: Verifies the run safe modes are parsed scenario and its expected safety or state invariant.
 #[test]
 fn run_safe_modes_are_parsed() {
     let invocation = parse(&[
@@ -34,6 +38,7 @@ fn run_safe_modes_are_parsed() {
     );
 }
 
+// Function purpose: Verifies the global options work before or after subcommand scenario and its expected safety or state invariant.
 #[test]
 fn global_options_work_before_or_after_subcommand() {
     let invocation = parse(&[
@@ -51,6 +56,7 @@ fn global_options_work_before_or_after_subcommand() {
     );
 }
 
+// Function purpose: Verifies the command hierarchy is stable scenario and its expected safety or state invariant.
 #[test]
 fn command_hierarchy_is_stable() {
     assert_eq!(
@@ -71,6 +77,7 @@ fn command_hierarchy_is_stable() {
     );
 }
 
+// Function purpose: Verifies the mock self test is parsed scenario and its expected safety or state invariant.
 #[test]
 fn mock_self_test_is_parsed() {
     assert_eq!(
@@ -81,6 +88,7 @@ fn mock_self_test_is_parsed() {
     );
 }
 
+// Function purpose: Verifies the missing data directory value is explicit scenario and its expected safety or state invariant.
 #[test]
 fn missing_data_directory_value_is_explicit() {
     let error =
@@ -88,6 +96,7 @@ fn missing_data_directory_value_is_explicit() {
     assert_eq!(error, CliError::MissingValue("--data-dir".to_string()));
 }
 
+// Function purpose: Verifies the unknown command is rejected scenario and its expected safety or state invariant.
 #[test]
 fn unknown_command_is_rejected() {
     let error =

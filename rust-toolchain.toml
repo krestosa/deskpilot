@@ -1,3 +1,4 @@
+# File purpose: Pins the compiler, components, and Windows target used for reproducible builds.
 [toolchain]
 channel = "1.85.0"
 profile = "minimal"

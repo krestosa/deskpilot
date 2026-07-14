@@ -1,3 +1,4 @@
+<!-- File purpose: Documents diagnosis and recovery procedures for common runtime failures. -->
 # Troubleshooting
 
 ## `DeskPilot is not running or the IPC timeout expired`

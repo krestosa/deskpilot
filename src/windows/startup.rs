@@ -1,3 +1,4 @@
+// File purpose: Creates, removes, and inspects the current-user Startup shortcut.
 use std::path::{Path, PathBuf};
 use windows::core::{Interface, PCWSTR};
 use windows::Win32::System::Com::{
@@ -8,6 +9,7 @@ use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 
 use super::util::wide;
 
+// Function purpose: Performs the shortcut path operation required by this module.
 pub fn shortcut_path() -> Result<PathBuf, String> {
     let appdata =
         std::env::var_os("APPDATA").ok_or_else(|| "APPDATA is not defined".to_string())?;
@@ -20,10 +22,12 @@ pub fn shortcut_path() -> Result<PathBuf, String> {
         .join("DeskPilot.lnk"))
 }
 
+// Function purpose: Returns whether enabled.
 pub fn is_enabled() -> bool {
     shortcut_path().is_ok_and(|path| path.exists())
 }
 
+// Function purpose: Performs the enable operation required by this module.
 pub fn enable(executable: &Path, data_dir: &Path) -> Result<(), String> {
     let shortcut = shortcut_path()?;
     if let Some(parent) = shortcut.parent() {
@@ -59,6 +63,7 @@ pub fn enable(executable: &Path, data_dir: &Path) -> Result<(), String> {
     }
 }
 
+// Function purpose: Performs the disable operation required by this module.
 pub fn disable() -> Result<(), String> {
     let path = shortcut_path()?;
     if path.exists() {

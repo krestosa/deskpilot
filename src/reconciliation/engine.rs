@@ -1,11 +1,16 @@
+// File purpose: Executes bounded reconciliation plans against an abstract desktop backend.
 use thiserror::Error;
 
 use super::{plan, DesktopId, DesktopState, Mutation};
 
 pub trait ReconcileBackend {
+    // Function purpose: Builds a fresh ordered desktop snapshot with current occupancy and empty-grace state.
     fn snapshot(&mut self) -> Result<Vec<DesktopState>, String>;
+    // Function purpose: Creates desktop.
     fn create_desktop(&mut self) -> Result<DesktopId, String>;
+    // Function purpose: Switches desktop.
     fn switch_desktop(&mut self, desktop: &DesktopId) -> Result<(), String>;
+    // Function purpose: Removes desktop.
     fn remove_desktop(&mut self, desktop: &DesktopId, fallback: &DesktopId) -> Result<(), String>;
 }
 
@@ -28,6 +33,7 @@ pub enum ReconcileError {
     IterationLimit(usize),
 }
 
+// Function purpose: Repeatedly snapshots and mutates a backend until reconciliation is stable or a safety bound is reached.
 pub fn apply_plan<B: ReconcileBackend>(
     backend: &mut B,
     max_iterations: usize,

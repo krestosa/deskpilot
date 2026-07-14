@@ -1,3 +1,4 @@
+// File purpose: Wraps Windows virtual desktop enumeration, navigation, creation, removal, pin detection, and window membership.
 use crate::config::NavigationMode;
 use crate::reconciliation::DesktopId;
 use crate::wheel::{target_index, Step};
@@ -31,6 +32,7 @@ pub struct WinvdBackend {
 }
 
 impl WinvdBackend {
+    // Function purpose: Verifies the detect scenario and its expected safety or state invariant.
     pub fn detect() -> Self {
         let version = windows_version();
         let compatible = is_supported_version(version);
@@ -52,18 +54,22 @@ impl WinvdBackend {
         }
     }
 
+    // Function purpose: Verifies the version scenario and its expected safety or state invariant.
     pub fn version(&self) -> WindowsVersion {
         self.version
     }
 
+    // Function purpose: Verifies the compatible scenario and its expected safety or state invariant.
     pub fn compatible(&self) -> bool {
         self.compatible
     }
 
+    // Function purpose: Verifies the compatibility reason scenario and its expected safety or state invariant.
     pub fn compatibility_reason(&self) -> &str {
         &self.compatibility_reason
     }
 
+    // Function purpose: Verifies the capabilities scenario and its expected safety or state invariant.
     pub fn capabilities(&self) -> BackendCapabilities {
         BackendCapabilities {
             enumerate: self.compatible,
@@ -75,6 +81,7 @@ impl WinvdBackend {
         }
     }
 
+    // Function purpose: Verifies the list scenario and its expected safety or state invariant.
     pub fn list(&self) -> Result<Vec<DesktopInfo>, String> {
         self.require_compatible()?;
         let desktops = winvd::get_desktops().map_err(format_error)?;
@@ -93,6 +100,7 @@ impl WinvdBackend {
             .collect()
     }
 
+    // Function purpose: Verifies the current scenario and its expected safety or state invariant.
     pub fn current(&self) -> Result<DesktopInfo, String> {
         self.require_compatible()?;
         let desktop = winvd::get_current_desktop().map_err(format_error)?;
@@ -104,11 +112,13 @@ impl WinvdBackend {
         })
     }
 
+    // Function purpose: Verifies the switch to id scenario and its expected safety or state invariant.
     pub fn switch_to_id(&self, desktop: &DesktopId) -> Result<(), String> {
         let target = self.find(desktop)?;
         winvd::switch_desktop(target.index as u32).map_err(format_error)
     }
 
+    // Function purpose: Verifies the switch relative scenario and its expected safety or state invariant.
     pub fn switch_relative(&self, step: Step, mode: NavigationMode) -> Result<DesktopInfo, String> {
         let desktops = self.list()?;
         let current = self.current()?;
@@ -121,6 +131,7 @@ impl WinvdBackend {
             .ok_or_else(|| "target desktop disappeared".to_string())
     }
 
+    // Function purpose: Verifies the create scenario and its expected safety or state invariant.
     pub fn create(&self) -> Result<DesktopInfo, String> {
         self.require_compatible()?;
         let desktop = winvd::create_desktop().map_err(format_error)?;
@@ -132,6 +143,7 @@ impl WinvdBackend {
         })
     }
 
+    // Function purpose: Verifies the remove scenario and its expected safety or state invariant.
     pub fn remove(&self, desktop: &DesktopId, fallback: &DesktopId) -> Result<(), String> {
         self.require_compatible()?;
         let desktop = self.find(desktop)?;
@@ -139,6 +151,7 @@ impl WinvdBackend {
         winvd::remove_desktop(desktop.index as u32, fallback.index as u32).map_err(format_error)
     }
 
+    // Function purpose: Verifies the desktop for window scenario and its expected safety or state invariant.
     pub fn desktop_for_window(&self, hwnd: HWND) -> Result<DesktopId, String> {
         self.require_compatible()?;
         let desktop = winvd::get_desktop_by_window(to_win_hwnd(hwnd)).map_err(format_error)?;
@@ -146,22 +159,26 @@ impl WinvdBackend {
         Ok(DesktopId(format!("{id:?}")))
     }
 
+    // Function purpose: Verifies the is window on desktop scenario and its expected safety or state invariant.
     pub fn is_window_on_desktop(&self, hwnd: HWND, desktop: &DesktopId) -> Result<bool, String> {
         self.require_compatible()?;
         let desktop = self.find(desktop)?;
         winvd::is_window_on_desktop(desktop.index as u32, to_win_hwnd(hwnd)).map_err(format_error)
     }
 
+    // Function purpose: Verifies the is window on current desktop scenario and its expected safety or state invariant.
     pub fn is_window_on_current_desktop(&self, hwnd: HWND) -> Result<bool, String> {
         self.require_compatible()?;
         winvd::is_window_on_current_desktop(to_win_hwnd(hwnd)).map_err(format_error)
     }
 
+    // Function purpose: Verifies the is window pinned scenario and its expected safety or state invariant.
     pub fn is_window_pinned(&self, hwnd: HWND) -> Result<bool, String> {
         self.require_compatible()?;
         winvd::is_pinned_window(to_win_hwnd(hwnd)).map_err(format_error)
     }
 
+    // Function purpose: Verifies the find scenario and its expected safety or state invariant.
     fn find(&self, id: &DesktopId) -> Result<DesktopInfo, String> {
         self.list()?
             .into_iter()
@@ -169,6 +186,7 @@ impl WinvdBackend {
             .ok_or_else(|| format!("desktop {} is no longer present", id.0))
     }
 
+    // Function purpose: Verifies the require compatible scenario and its expected safety or state invariant.
     fn require_compatible(&self) -> Result<(), String> {
         if self.compatible {
             Ok(())
@@ -178,6 +196,7 @@ impl WinvdBackend {
     }
 }
 
+// Function purpose: Verifies the is supported version scenario and its expected safety or state invariant.
 fn is_supported_version(version: WindowsVersion) -> bool {
     version.major == 10
         && match version.build {
@@ -187,10 +206,12 @@ fn is_supported_version(version: WindowsVersion) -> bool {
         }
 }
 
+// Function purpose: Verifies the to win hwnd scenario and its expected safety or state invariant.
 fn to_win_hwnd(hwnd: HWND) -> WinHwnd {
     WinHwnd(hwnd as *mut c_void)
 }
 
+// Function purpose: Verifies the format error scenario and its expected safety or state invariant.
 fn format_error(error: impl std::fmt::Debug) -> String {
     format!("{error:?}")
 }
@@ -199,6 +220,7 @@ fn format_error(error: impl std::fmt::Debug) -> String {
 mod tests {
     use super::{is_supported_version, WindowsVersion};
 
+    // Function purpose: Verifies the accepts supported 26100 revisions scenario and its expected safety or state invariant.
     #[test]
     fn accepts_supported_26100_revisions() {
         assert!(is_supported_version(WindowsVersion {
@@ -209,6 +231,7 @@ mod tests {
         }));
     }
 
+    // Function purpose: Verifies the rejects manifest virtualized windows 8 version scenario and its expected safety or state invariant.
     #[test]
     fn rejects_manifest_virtualized_windows_8_version() {
         assert!(!is_supported_version(WindowsVersion {
@@ -219,6 +242,7 @@ mod tests {
         }));
     }
 
+    // Function purpose: Verifies the preserves safe failure for unknown windows 11 builds scenario and its expected safety or state invariant.
     #[test]
     fn preserves_safe_failure_for_unknown_windows_11_builds() {
         assert!(!is_supported_version(WindowsVersion {

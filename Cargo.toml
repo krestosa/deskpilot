@@ -1,3 +1,4 @@
+# File purpose: Declares the DeskPilot Rust package, dependencies, build settings, release profile, and lint policy.
 [package]
 name = "deskpilot"
 version = "0.1.5"

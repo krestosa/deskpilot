@@ -1,3 +1,4 @@
+<!-- File purpose: Describes deterministic, hosted, and interactive validation coverage. -->
 # Testing
 
 ## Deterministic tests

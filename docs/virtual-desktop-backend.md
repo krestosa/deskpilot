@@ -1,3 +1,4 @@
+<!-- File purpose: Explains the supported Windows virtual desktop backend and compatibility policy. -->
 # Virtual desktop backend
 
 ## Why an internal backend is required

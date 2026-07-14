@@ -1,3 +1,4 @@
+// File purpose: Models desktop occupancy and computes safe create or remove mutations.
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -37,6 +38,7 @@ pub struct Plan {
     pub stable: bool,
 }
 
+// Function purpose: Computes the next safe desktop mutation required to restore the dynamic desktop invariant.
 pub fn plan(desktops: &[DesktopState]) -> Plan {
     if desktops.is_empty() {
         return Plan {
@@ -103,6 +105,7 @@ pub fn plan(desktops: &[DesktopState]) -> Plan {
     }
 }
 
+// Function purpose: Performs the trailing empty fallback operation required by this module.
 fn trailing_empty_fallback(trailing_empty_start: usize, removing: usize) -> usize {
     if removing > trailing_empty_start {
         removing - 1

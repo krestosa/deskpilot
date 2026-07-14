@@ -1,3 +1,4 @@
+// File purpose: Implements the native notification-area icon, menu, commands, and Explorer recovery.
 use std::mem::{size_of, zeroed};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
@@ -69,6 +70,7 @@ pub struct TrayState {
 }
 
 impl TrayState {
+    // Function purpose: Constructs a new initialized value for this type.
     fn new() -> Self {
         Self {
             enabled: AtomicBool::new(true),
@@ -81,6 +83,7 @@ impl TrayState {
         }
     }
 
+    // Function purpose: Performs the update operation required by this module.
     pub fn update(
         &self,
         enabled: bool,
@@ -116,6 +119,7 @@ pub struct Tray {
 }
 
 impl Tray {
+    // Function purpose: Starts the component and returns the controller used to update or stop it.
     pub fn start(sender: Sender<TrayCommand>) -> Result<Self, String> {
         COMMAND_SENDER
             .set(sender)
@@ -136,10 +140,12 @@ impl Tray {
         })
     }
 
+    // Function purpose: Performs the state operation required by this module.
     pub fn state(&self) -> &Arc<TrayState> {
         &self.state
     }
 
+    // Function purpose: Stops the component, signals its worker thread, and waits for native resources to be released.
     pub fn stop(&mut self) {
         if let Ok(hwnd) = self.state.hwnd.lock() {
             if *hwnd != 0 {
@@ -153,11 +159,13 @@ impl Tray {
 }
 
 impl Drop for Tray {
+    // Function purpose: Releases the native or background resource owned by this value when it leaves scope.
     fn drop(&mut self) {
         self.stop();
     }
 }
 
+// Function purpose: Performs the tray loop operation required by this module.
 fn tray_loop(ready: Sender<Result<(), String>>) -> Result<(), String> {
     unsafe {
         let module = GetModuleHandleW(std::ptr::null());
@@ -212,6 +220,7 @@ fn tray_loop(ready: Sender<Result<(), String>>) -> Result<(), String> {
     Ok(())
 }
 
+// Function purpose: Handles the native window proc callback and forwards only the relevant event.
 unsafe extern "system" fn window_proc(
     hwnd: HWND,
     message: u32,
@@ -261,12 +270,14 @@ unsafe extern "system" fn window_proc(
     }
 }
 
+// Function purpose: Performs the send operation required by this module.
 fn send(command: TrayCommand) {
     if let Some(sender) = COMMAND_SENDER.get() {
         let _ = sender.send(command);
     }
 }
 
+// Function purpose: Performs the show menu operation required by this module.
 fn show_menu(hwnd: HWND) {
     unsafe {
         let menu = CreatePopupMenu();
@@ -343,10 +354,12 @@ fn show_menu(hwnd: HWND) {
     }
 }
 
+// Function purpose: Performs the append operation required by this module.
 unsafe fn append(menu: isize, id: usize, label: &str) {
     unsafe { AppendMenuW(menu, MF_STRING, id, wide(label).as_ptr()) };
 }
 
+// Function purpose: Performs the check operation required by this module.
 unsafe fn check(menu: isize, id: usize, checked: bool) {
     unsafe {
         CheckMenuItem(
@@ -357,10 +370,12 @@ unsafe fn check(menu: isize, id: usize, checked: bool) {
     };
 }
 
+// Function purpose: Performs the add icon operation required by this module.
 fn add_icon(hwnd: HWND) {
     restore_icon(hwnd);
 }
 
+// Function purpose: Performs the restore icon operation required by this module.
 fn restore_icon(hwnd: HWND) {
     let state = STATE.get();
     let enabled = state.is_none_or(|value| value.enabled.load(Ordering::Acquire));
@@ -368,6 +383,7 @@ fn restore_icon(hwnd: HWND) {
     update_icon(hwnd, error, enabled);
 }
 
+// Function purpose: Updates icon.
 fn update_icon(hwnd: HWND, error: bool, enabled: bool) {
     unsafe {
         let mut data: NOTIFYICONDATAW = zeroed();
@@ -403,6 +419,7 @@ fn update_icon(hwnd: HWND, error: bool, enabled: bool) {
     }
 }
 
+// Function purpose: Deletes icon.
 fn delete_icon(hwnd: HWND) {
     unsafe {
         let mut data: NOTIFYICONDATAW = zeroed();

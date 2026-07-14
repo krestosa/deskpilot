@@ -1,3 +1,4 @@
+// File purpose: Coordinates process startup, event scheduling, tray and IPC commands, navigation, reconciliation, diagnostics, and shutdown.
 use crate::config::{Config, LogLevel, NavigationMode, WheelDirection};
 use crate::diagnostics::{BackendDiagnostic, DoctorReport, OccupancyDiagnostic};
 use crate::event::{Event, EventBus};
@@ -37,6 +38,7 @@ enum AppSignal {
     WindowEvent,
 }
 
+// Function purpose: Starts the module runtime, owns its event loop, and releases all native resources during orderly shutdown.
 pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
     fs::create_dir_all(&data_dir).map_err(|error| {
         format!(
@@ -231,6 +233,7 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
     Ok(())
 }
 
+// Function purpose: Verifies the schedule reconcile at earliest scenario and its expected safety or state invariant.
 fn schedule_reconcile_at_earliest(pending: &mut Option<Instant>, deadline: Instant) {
     match pending {
         Some(current) if *current <= deadline => {}
@@ -254,12 +257,14 @@ struct AppState {
 }
 
 impl AppState {
+    // Function purpose: Verifies the config read scenario and its expected safety or state invariant.
     fn config_read(&self) -> Config {
         self.config
             .read()
             .map_or_else(|_| Config::default(), |config| config.clone())
     }
 
+    // Function purpose: Verifies the save config scenario and its expected safety or state invariant.
     fn save_config(&self, config: &Config) -> Result<(), String> {
         config
             .write_atomic(&self.config_path)
@@ -272,6 +277,7 @@ impl AppState {
         Ok(())
     }
 
+    // Function purpose: Switches to the relative desktop selected by the normalized wheel step and configured navigation mode.
     fn navigate(&mut self, step: Step) {
         let config = self.config_read();
         if !config.enabled {
@@ -287,6 +293,7 @@ impl AppState {
         }
     }
 
+    // Function purpose: Runs bounded desktop reconciliation and records or publishes the outcome.
     fn reconcile(&mut self) {
         if !self.backend.compatible() {
             return;
@@ -334,6 +341,7 @@ impl AppState {
         self.error("reconciliation stopped at iteration limit".to_string());
     }
 
+    // Function purpose: Builds a fresh ordered desktop snapshot with current occupancy and empty-grace state.
     fn snapshot(&mut self) -> Result<Vec<crate::reconciliation::DesktopState>, String> {
         let config = self.config_read();
         let mut states = inventory::snapshot(&self.backend, &config, &HashMap::new())?;
@@ -353,6 +361,7 @@ impl AppState {
         Ok(states)
     }
 
+    // Function purpose: Verifies the handle tray scenario and its expected safety or state invariant.
     fn handle_tray(&mut self, command: TrayCommand, tray: Option<&Tray>) -> Result<bool, String> {
         let mut config = self.config_read();
         let mut reconcile = false;
@@ -411,6 +420,7 @@ impl AppState {
         Ok(reconcile)
     }
 
+    // Function purpose: Verifies the handle ipc scenario and its expected safety or state invariant.
     fn handle_ipc(&mut self, request: ServerRequest) -> bool {
         let command = request.request.command.clone();
         let mut reconcile = false;
@@ -516,6 +526,7 @@ impl AppState {
         reconcile
     }
 
+    // Function purpose: Verifies the reload scenario and its expected safety or state invariant.
     fn reload(&mut self) -> Result<(), String> {
         let config = Config::load(&self.config_path).map_err(|error| error.to_string())?;
         let mut target = self
@@ -527,6 +538,7 @@ impl AppState {
         Ok(())
     }
 
+    // Function purpose: Verifies the status scenario and its expected safety or state invariant.
     fn status(&self) -> serde_json::Value {
         let config = self.config_read();
         json!({
@@ -541,6 +553,7 @@ impl AppState {
         })
     }
 
+    // Function purpose: Builds the structured diagnostic report without exposing window titles or document contents.
     fn doctor(&mut self) -> DoctorReport {
         let config = self.config_read();
         let version = self.backend.version();
@@ -623,6 +636,7 @@ impl AppState {
         }
     }
 
+    // Function purpose: Verifies the update tray scenario and its expected safety or state invariant.
     fn update_tray(&self, tray: Option<&Tray>) {
         if let Some(tray) = tray {
             let config = self.config_read();
@@ -637,6 +651,7 @@ impl AppState {
         }
     }
 
+    // Function purpose: Verifies the publish scenario and its expected safety or state invariant.
     fn publish(&self, kind: &str, message: impl Into<String>) {
         let message = message.into();
         log(LogLevel::Info, &message);
@@ -646,6 +661,7 @@ impl AppState {
         self.events.publish(Event::new(kind, message));
     }
 
+    // Function purpose: Verifies the error scenario and its expected safety or state invariant.
     fn error(&self, message: String) {
         log(LogLevel::Error, &message);
         if self.foreground {
@@ -655,6 +671,7 @@ impl AppState {
     }
 }
 
+// Function purpose: Verifies the bridge scenario and its expected safety or state invariant.
 fn bridge<T, F>(receiver: Receiver<T>, sender: mpsc::Sender<AppSignal>, map: F)
 where
     T: Send + 'static,
@@ -669,6 +686,7 @@ where
     });
 }
 
+// Function purpose: Verifies the open path scenario and its expected safety or state invariant.
 fn open_path(path: &Path) {
     let operation = wide("open");
     let target = wide(path);
@@ -684,6 +702,7 @@ fn open_path(path: &Path) {
     }
 }
 
+// Function purpose: Verifies the tail log scenario and its expected safety or state invariant.
 fn tail_log(path: &Path, lines: usize) -> Vec<String> {
     fs::read_to_string(path)
         .map(|text| {
@@ -699,6 +718,7 @@ fn tail_log(path: &Path, lines: usize) -> Vec<String> {
         .unwrap_or_default()
 }
 
+// Function purpose: Verifies the install panic hook scenario and its expected safety or state invariant.
 fn install_panic_hook(data_dir: &Path) {
     let crash_dir = data_dir.join("crash-reports");
     let _ = fs::create_dir_all(&crash_dir);
@@ -724,6 +744,7 @@ struct InstanceGuard {
 }
 
 impl InstanceGuard {
+    // Function purpose: Verifies the acquire scenario and its expected safety or state invariant.
     fn acquire() -> Result<Self, String> {
         let sid = system::current_user_sid()?;
         let name = wide(format!("Local\\DeskPilot-{sid}"));
@@ -741,6 +762,7 @@ impl InstanceGuard {
 }
 
 impl Drop for InstanceGuard {
+    // Function purpose: Releases the native or background resource owned by this value when it leaves scope.
     fn drop(&mut self) {
         unsafe {
             CloseHandle(self.handle);
@@ -753,6 +775,7 @@ mod scheduling_tests {
     use super::schedule_reconcile_at_earliest;
     use std::time::{Duration, Instant};
 
+    // Function purpose: Verifies the repeated window events cannot postpone reconciliation scenario and its expected safety or state invariant.
     #[test]
     fn repeated_window_events_cannot_postpone_reconciliation() {
         let now = Instant::now();
@@ -762,6 +785,7 @@ mod scheduling_tests {
         assert_eq!(pending, Some(first));
     }
 
+    // Function purpose: Verifies the watchdog advances a later pending reconciliation scenario and its expected safety or state invariant.
     #[test]
     fn watchdog_advances_a_later_pending_reconciliation() {
         let now = Instant::now();

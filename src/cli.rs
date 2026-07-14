@@ -1,3 +1,4 @@
+// File purpose: Defines command-line syntax, argument parsing, run options, and console command classification.
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -54,6 +55,7 @@ pub enum CliError {
 }
 
 impl Invocation {
+    // Function purpose: Performs the parse operation required by this module.
     pub fn parse<I, S>(args: I) -> Result<Self, CliError>
     where
         I: IntoIterator<Item = S>,
@@ -90,6 +92,7 @@ impl Invocation {
         })
     }
 
+    // Function purpose: Performs the needs console operation required by this module.
     pub fn needs_console(&self) -> bool {
         !matches!(
             self.command,
@@ -101,6 +104,7 @@ impl Invocation {
     }
 }
 
+// Function purpose: Parses command.
 fn parse_command(args: &[String]) -> Result<Command, CliError> {
     if args.is_empty() {
         return Ok(Command::Run(RunOptions::default()));
@@ -175,6 +179,7 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
     }
 }
 
+// Function purpose: Performs the exact operation required by this module.
 fn exact(args: &[String], command: Command) -> Result<Command, CliError> {
     if args.len() == 1 {
         Ok(command)

@@ -1,3 +1,4 @@
+// File purpose: Re-exports the reconciliation model and engine as the module public API.
 mod engine;
 mod model;
 

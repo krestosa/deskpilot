@@ -1,3 +1,4 @@
+// File purpose: Creates privacy-preserving support bundles and computes their SHA-256 manifest.
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -21,6 +22,7 @@ struct Manifest {
     files: BTreeMap<String, ManifestEntry>,
 }
 
+// Function purpose: Verifies the redacted config toml scenario and its expected safety or state invariant.
 pub fn redacted_config_toml(config: &Config) -> Result<String, String> {
     let mut redacted = config.clone();
     redact_rules(&mut redacted.windows.ignore_executables);
@@ -28,6 +30,7 @@ pub fn redacted_config_toml(config: &Config) -> Result<String, String> {
     toml::to_string_pretty(&redacted).map_err(|error| error.to_string())
 }
 
+// Function purpose: Writes a redacted local support archive with diagnostics, bounded logs, a manifest, and checksums.
 pub fn create_support_bundle(
     data_dir: &Path,
     doctor_json: &str,
@@ -107,6 +110,7 @@ pub fn create_support_bundle(
     Ok(output)
 }
 
+// Function purpose: Verifies the redact rules scenario and its expected safety or state invariant.
 fn redact_rules(values: &mut Vec<String>) {
     if !values.is_empty() {
         let count = values.len();
@@ -117,6 +121,7 @@ fn redact_rules(values: &mut Vec<String>) {
     }
 }
 
+// Function purpose: Verifies the checksum file scenario and its expected safety or state invariant.
 fn checksum_file(manifest: &Manifest) -> String {
     let mut output = String::new();
     for (name, entry) in &manifest.files {
@@ -125,6 +130,7 @@ fn checksum_file(manifest: &Manifest) -> String {
     output
 }
 
+// Function purpose: Verifies the add bytes scenario and its expected safety or state invariant.
 fn add_bytes(
     zip: &mut zip::ZipWriter<File>,
     options: SimpleFileOptions,
@@ -143,6 +149,7 @@ fn add_bytes(
     Ok(())
 }
 
+// Function purpose: Verifies the write bytes scenario and its expected safety or state invariant.
 fn write_bytes(
     zip: &mut zip::ZipWriter<File>,
     options: SimpleFileOptions,
@@ -157,6 +164,7 @@ fn write_bytes(
     zip.write_all(data).map_err(|error| error.to_string())
 }
 
+// Function purpose: Computes the lowercase SHA-256 digest of the supplied bytes without an external crypto dependency.
 fn sha256_hex(data: &[u8]) -> String {
     const INITIAL: [u32; 8] = [
         0x6a09_e667,
@@ -302,6 +310,7 @@ fn sha256_hex(data: &[u8]) -> String {
     output
 }
 
+// Function purpose: Verifies the safe timestamp scenario and its expected safety or state invariant.
 fn safe_timestamp() -> String {
     timestamp_utc().replace([':', '.'], "-")
 }
@@ -311,6 +320,7 @@ mod tests {
     use super::{redacted_config_toml, sha256_hex};
     use crate::config::Config;
 
+    // Function purpose: Verifies the sha256 matches standard vectors scenario and its expected safety or state invariant.
     #[test]
     fn sha256_matches_standard_vectors() {
         assert_eq!(
@@ -323,6 +333,7 @@ mod tests {
         );
     }
 
+    // Function purpose: Verifies the configuration rules are redacted scenario and its expected safety or state invariant.
     #[test]
     fn configuration_rules_are_redacted() {
         let mut config = Config::default();

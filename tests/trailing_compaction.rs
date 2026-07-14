@@ -1,3 +1,4 @@
+// File purpose: Verifies repeated trailing-empty compaction while preserving the active desktop.
 use deskpilot::reconciliation::{apply_plan, DesktopId, DesktopState, Occupancy, ReconcileBackend};
 
 struct FakeBackend {
@@ -6,18 +7,22 @@ struct FakeBackend {
 }
 
 impl ReconcileBackend for FakeBackend {
+    // Function purpose: Builds a fresh ordered desktop snapshot with current occupancy and empty-grace state.
     fn snapshot(&mut self) -> Result<Vec<DesktopState>, String> {
         Ok(self.desktops.clone())
     }
 
+    // Function purpose: Verifies the create desktop scenario and its expected safety or state invariant.
     fn create_desktop(&mut self) -> Result<DesktopId, String> {
         Err("unexpected create".to_string())
     }
 
+    // Function purpose: Verifies the switch desktop scenario and its expected safety or state invariant.
     fn switch_desktop(&mut self, _desktop: &DesktopId) -> Result<(), String> {
         Err("reconciliation must not switch the user".to_string())
     }
 
+    // Function purpose: Verifies the remove desktop scenario and its expected safety or state invariant.
     fn remove_desktop(&mut self, desktop: &DesktopId, _fallback: &DesktopId) -> Result<(), String> {
         let state = self
             .desktops
@@ -33,6 +38,7 @@ impl ReconcileBackend for FakeBackend {
     }
 }
 
+// Function purpose: Verifies the state scenario and its expected safety or state invariant.
 fn state(index: usize, occupancy: Occupancy, current: bool) -> DesktopState {
     DesktopState {
         id: DesktopId(format!("desktop-{index}")),
@@ -42,6 +48,7 @@ fn state(index: usize, occupancy: Occupancy, current: bool) -> DesktopState {
     }
 }
 
+// Function purpose: Verifies the several trailing empties compact to one without leaving active desktop scenario and its expected safety or state invariant.
 #[test]
 fn several_trailing_empties_compact_to_one_without_leaving_active_desktop() {
     let active = DesktopId("desktop-3".to_string());
