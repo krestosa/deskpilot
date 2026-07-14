@@ -38,29 +38,37 @@ jobs:
           rustc --version --verbose
           cargo --version
 
-      - name: Bootstrap lockfile when absent
+      - name: Verify committed dependency lock
         shell: pwsh
         run: |
-          if (-not (Test-Path Cargo.lock)) {
-            cargo generate-lockfile
-          }
-          if (-not (Test-Path Cargo.lock)) { throw 'Cargo.lock was not generated.' }
+          if (-not (Test-Path Cargo.lock -PathType Leaf)) { throw 'Cargo.lock is not committed.' }
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
 
-      - name: Bootstrap formatting snapshot
+      - name: Check formatting
         shell: pwsh
-        run: |
-          cargo fmt --all
-          New-Item -ItemType Directory -Force artifacts | Out-Null
-          Compress-Archive -Path src,tests,Cargo.toml,build.rs -DestinationPath artifacts\formatted-source.zip -Force
+        run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          cargo clippy --workspace --all-targets --locked -- -D warnings 2>&1 |
+            Tee-Object -FilePath artifacts\clippy.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Unit and integration tests
-        run: cargo test --workspace --locked
+        shell: pwsh
+        run: |
+          cargo test --workspace --locked 2>&1 |
+            Tee-Object -FilePath artifacts\tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Release build
-        run: cargo build --release --locked --target ${{ env.TARGET }}
+        shell: pwsh
+        run: |
+          cargo build --release --locked --target $env:TARGET 2>&1 |
+            Tee-Object -FilePath artifacts\build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Version command
         shell: pwsh
@@ -122,15 +130,15 @@ jobs:
           New-Item -ItemType Directory -Force artifacts | Out-Null
           [ordered]@{
             commit = '${{ github.sha }}'
+            head_sha = '${{ github.event.pull_request.head.sha || github.sha }}'
             runner = '${{ runner.os }}'
             rustc = (rustc --version)
             cargo = (cargo --version)
             timestamp_utc = [DateTime]::UtcNow.ToString('o')
           } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM artifacts\ci-metadata.json
-          if (Test-Path Cargo.lock) { Copy-Item Cargo.lock artifacts\Cargo.lock }
           if (Test-Path dist\package-report.json) { Copy-Item dist\package-report.json artifacts\package-report.json }
 
-      - name: Upload portable artifact
+      - name: Upload portable artifact and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
