@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- Fixed Windows 11 version detection so manifest virtualization cannot report `6.2.9200` and incorrectly disable the virtual desktop backend.
+- Corrected the Windows 10/11 compatibility GUID embedded in the executable manifest.
+- Added runtime and compatibility regression tests for native Windows build detection.
+
 ## 0.1.0
 
 - Added portable native Windows 11 tray application.
