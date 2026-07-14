@@ -1,3 +1,4 @@
+# File purpose: Runs the real interactive Windows 11 smoke test and resource measurements on a dedicated self-hosted runner.
 name: Windows interactive integration
 
 on:
