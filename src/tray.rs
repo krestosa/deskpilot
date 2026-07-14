@@ -393,7 +393,7 @@ fn update_icon(hwnd: HWND, error: bool, enabled: bool) {
         } else {
             "DeskPilot — paused"
         });
-        for (target, source) in data.szTip.iter_mut().zip(tip.into_iter()) {
+        for (target, source) in data.szTip.iter_mut().zip(tip) {
             *target = source;
         }
         let action = if data.hIcon == 0 { NIM_ADD } else { NIM_MODIFY };
