@@ -98,6 +98,31 @@ pub fn snapshot(
         .collect())
 }
 
+pub fn desktop_is_safe_to_remove(backend: &WinvdBackend, desktop: &DesktopId) -> bool {
+    for hwnd in enumerate_windows() {
+        let Some(identity) = inspect_identity(hwnd) else {
+            continue;
+        };
+        if identity.process_id == current_process_id() || ignored_class(&identity.class_name) {
+            continue;
+        }
+
+        let mapped = match backend.desktop_for_window(hwnd) {
+            Ok(mapped) => mapped,
+            Err(_) => return false,
+        };
+        if &mapped != desktop {
+            continue;
+        }
+
+        match backend.is_window_pinned(hwnd) {
+            Ok(true) => continue,
+            Ok(false) | Err(_) => return false,
+        }
+    }
+    true
+}
+
 pub fn exclusive_fullscreen_active() -> bool {
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -147,7 +172,7 @@ fn enumerate_windows() -> Vec<HWND> {
 
 fn inspect_basic(hwnd: HWND) -> Option<BasicWindow> {
     unsafe {
-        if IsWindow(hwnd) == 0 || IsWindowVisible(hwnd) == 0 || GetWindow(hwnd, GW_OWNER) != 0 {
+        if IsWindowVisible(hwnd) == 0 || GetWindow(hwnd, GW_OWNER) != 0 {
             return None;
         }
         let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
@@ -163,6 +188,15 @@ fn inspect_basic(hwnd: HWND) -> Option<BasicWindow> {
         ) >= 0
             && cloaked != 0
         {
+            return None;
+        }
+    }
+    inspect_identity(hwnd)
+}
+
+fn inspect_identity(hwnd: HWND) -> Option<BasicWindow> {
+    unsafe {
+        if IsWindow(hwnd) == 0 {
             return None;
         }
         let mut class = [0_u16; 256];
