@@ -1,4 +1,4 @@
-# File purpose: Temporarily applies and validates the explicit final reconciliation patch script.
+# File purpose: Temporarily applies, formats, and validates the explicit final reconciliation patch script.
 name: Run explicit final reconciliation fix
 
 on:
@@ -30,6 +30,10 @@ jobs:
       - name: Apply explicit patch
         shell: pwsh
         run: python tools/apply_final_fix.py
+
+      - name: Format generated Rust
+        shell: pwsh
+        run: cargo fmt --all
 
       - name: Check formatting
         shell: pwsh
