@@ -5,14 +5,17 @@ use crate::event::{Event, EventBus};
 use crate::ipc::{IpcResponse, IpcServer, ServerRequest};
 use crate::logging::{log, timestamp_utc, Logger};
 use crate::reconciliation::{
-    DesktopId, Occupancy, ReconcileBackend, ReconcilePass, ReconcileRuntime,
+    DesktopId, Occupancy, ReconcileBackend, ReconcilePass, ReconcileRuntime, SpareGuard,
+    WindowToken,
 };
 use crate::support::create_support_bundle;
 use crate::tray::{Tray, TrayCommand};
 use crate::wheel::Step;
 use crate::windows::desktops::WinvdBackend;
 use crate::windows::{
-    hooks::HookController, inventory, startup, system, window_events::WindowEventController,
+    hooks::HookController,
+    inventory, startup, system,
+    window_events::{WindowEvent, WindowEventController},
 };
 use crate::{APP_NAME, APP_VERSION};
 use serde_json::json;
@@ -37,7 +40,7 @@ enum AppSignal {
     Tray(TrayCommand),
     Ipc(ServerRequest),
     DesktopEvent,
-    WindowEvent,
+    WindowEvent(WindowEvent),
 }
 
 // Function purpose: Starts the module runtime, owns its event loop, and releases all native resources during orderly shutdown.
@@ -114,7 +117,7 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
     bridge(desktop_rx, signal_tx.clone(), |_| AppSignal::DesktopEvent);
 
     let (window_tx, window_rx) = mpsc::channel();
-    bridge(window_rx, signal_tx.clone(), |_| AppSignal::WindowEvent);
+    bridge(window_rx, signal_tx.clone(), AppSignal::WindowEvent);
     let mut window_events = match WindowEventController::start(window_tx) {
         Ok(controller) => Some(controller),
         Err(error) => {
@@ -134,6 +137,8 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
         events,
         empty_since: HashMap::new(),
         reconciler: ReconcileRuntime::default(),
+        spare_guard: SpareGuard::default(),
+        window_candidates: HashMap::new(),
         last_reconciliation: None,
         hook_state: if options.no_hook {
             "disabled by --no-hook".to_string()
@@ -181,7 +186,15 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
                     pending_reconcile = Some(Instant::now());
                 }
             }
-            Ok(AppSignal::DesktopEvent | AppSignal::WindowEvent) => {
+            Ok(AppSignal::DesktopEvent) => {
+                let delay = state.config_read().desktops.reconcile_delay_ms;
+                schedule_reconcile_at_earliest(
+                    &mut pending_reconcile,
+                    Instant::now() + Duration::from_millis(delay),
+                );
+            }
+            Ok(AppSignal::WindowEvent(event)) => {
+                state.note_window_event(event);
                 let delay = state.config_read().desktops.reconcile_delay_ms;
                 schedule_reconcile_at_earliest(
                     &mut pending_reconcile,
@@ -256,6 +269,8 @@ struct AppState {
     events: Arc<EventBus>,
     empty_since: HashMap<DesktopId, Instant>,
     reconciler: ReconcileRuntime,
+    spare_guard: SpareGuard,
+    window_candidates: HashMap<WindowToken, Instant>,
     last_reconciliation: Option<String>,
     hook_state: String,
     ipc_state: String,
@@ -268,12 +283,15 @@ struct AppReconcileBackend<'a> {
     backend: &'a WinvdBackend,
     config: &'a Config,
     empty_since: &'a mut HashMap<DesktopId, Instant>,
+    spare_guard: &'a mut SpareGuard,
+    window_candidates: &'a HashSet<WindowToken>,
 }
 
 impl ReconcileBackend for AppReconcileBackend<'_> {
     // Function purpose: Builds the current desktop snapshot and applies the configured empty-desktop grace period.
     fn snapshot(&mut self) -> Result<Vec<crate::reconciliation::DesktopState>, String> {
-        let mut states = inventory::snapshot(self.backend, self.config, &HashMap::new())?;
+        let detailed = inventory::detailed_snapshot(self.backend, self.config, &HashMap::new())?;
+        let mut states = detailed.states;
         let now = Instant::now();
         let existing: HashSet<_> = states.iter().map(|state| state.id.clone()).collect();
         self.empty_since.retain(|id, _| existing.contains(id));
@@ -287,6 +305,8 @@ impl ReconcileBackend for AppReconcileBackend<'_> {
                 state.empty_grace_elapsed = false;
             }
         }
+        self.spare_guard
+            .stabilize(&mut states, &detailed.windows, self.window_candidates);
         Ok(states)
     }
 
@@ -314,6 +334,20 @@ impl AppState {
             .map_or_else(|_| Config::default(), |config| config.clone())
     }
 
+    // Function purpose: Records only create or show events as short-lived evidence that a real eligible window may have consumed the protected spare.
+    fn note_window_event(&mut self, event: WindowEvent) {
+        if event.occupancy_gain() {
+            self.window_candidates.insert(event.token(), Instant::now());
+        }
+    }
+
+    // Function purpose: Expires stale native window tokens so unrelated historical events cannot consume a future spare.
+    fn prune_window_candidates(&mut self) {
+        let now = Instant::now();
+        self.window_candidates
+            .retain(|_, seen| now.duration_since(*seen) <= Duration::from_secs(5));
+    }
+
     // Function purpose: Persists config.
     fn save_config(&self, config: &Config) -> Result<(), String> {
         config
@@ -334,10 +368,19 @@ impl AppState {
             return;
         }
         match self.backend.switch_relative(step, config.wheel.navigation) {
-            Ok(desktop) => self.publish(
-                "desktop-switched",
-                format!("desktop index {}", desktop.index),
-            ),
+            Ok(desktop) => {
+                let is_last = self
+                    .backend
+                    .list()
+                    .is_ok_and(|desktops| desktop.index + 1 == desktops.len());
+                if is_last {
+                    self.spare_guard.arm(desktop.id.clone());
+                }
+                self.publish(
+                    "desktop-switched",
+                    format!("desktop index {}", desktop.index),
+                );
+            }
             Err(error) if error.contains("clamped edge") => {}
             Err(error) => self.error(format!("desktop navigation failed: {error}")),
         }
@@ -349,12 +392,16 @@ impl AppState {
             return ReconcilePass::Blocked;
         }
 
+        self.prune_window_candidates();
+        let window_candidates: HashSet<_> = self.window_candidates.keys().copied().collect();
         let config = self.config_read();
         let result = {
             let mut backend = AppReconcileBackend {
                 backend: &self.backend,
                 config: &config,
                 empty_since: &mut self.empty_since,
+                spare_guard: &mut self.spare_guard,
+                window_candidates: &window_candidates,
             };
             self.reconciler.reconcile_once(&mut backend)
         };
@@ -378,11 +425,15 @@ impl AppState {
 
     // Function purpose: Builds the same grace-aware snapshot used by reconciliation for diagnostics without applying a mutation.
     fn snapshot(&mut self) -> Result<Vec<crate::reconciliation::DesktopState>, String> {
+        self.prune_window_candidates();
+        let window_candidates: HashSet<_> = self.window_candidates.keys().copied().collect();
         let config = self.config_read();
         let mut backend = AppReconcileBackend {
             backend: &self.backend,
             config: &config,
             empty_since: &mut self.empty_since,
+            spare_guard: &mut self.spare_guard,
+            window_candidates: &window_candidates,
         };
         backend.snapshot()
     }

@@ -1,7 +1,7 @@
 // File purpose: Enumerates top-level windows and classifies desktop occupancy conservatively.
 use crate::config::Config;
 use crate::reconciliation::{DesktopId, DesktopState, Occupancy};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::mem::{size_of, zeroed};
 use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, RECT};
@@ -21,17 +21,36 @@ use super::desktops::{DesktopInfo, WinvdBackend};
 use super::system::current_process_id;
 use super::util::from_wide;
 
+#[derive(Debug)]
+pub struct DesktopInventory {
+    pub states: Vec<DesktopState>,
+    pub windows: HashMap<DesktopId, HashSet<crate::reconciliation::WindowToken>>,
+}
+
 // Function purpose: Builds a fresh ordered desktop snapshot with current occupancy and empty-grace state.
 pub fn snapshot(
     backend: &WinvdBackend,
     config: &Config,
     grace: &HashMap<DesktopId, bool>,
 ) -> Result<Vec<DesktopState>, String> {
+    detailed_snapshot(backend, config, grace).map(|inventory| inventory.states)
+}
+
+// Function purpose: Builds desktop occupancy together with stable window tokens used to distinguish real application creation from switch-time shell noise.
+pub fn detailed_snapshot(
+    backend: &WinvdBackend,
+    config: &Config,
+    grace: &HashMap<DesktopId, bool>,
+) -> Result<DesktopInventory, String> {
     let desktops = backend.list()?;
     let current = backend.current()?;
     let mut occupancy: HashMap<DesktopId, Occupancy> = desktops
         .iter()
         .map(|desktop| (desktop.id.clone(), Occupancy::Empty))
+        .collect();
+    let mut windows: HashMap<DesktopId, HashSet<crate::reconciliation::WindowToken>> = desktops
+        .iter()
+        .map(|desktop| (desktop.id.clone(), HashSet::new()))
         .collect();
 
     for hwnd in enumerate_windows() {
@@ -67,11 +86,15 @@ pub fn snapshot(
         }
 
         if let Some(desktop) = locate_window_desktop(backend, &desktops, &current.id, hwnd) {
-            occupancy.insert(desktop, Occupancy::Occupied);
+            occupancy.insert(desktop.clone(), Occupancy::Occupied);
+            windows
+                .entry(desktop)
+                .or_default()
+                .insert(hwnd as usize as crate::reconciliation::WindowToken);
         }
     }
 
-    Ok(desktops
+    let states = desktops
         .into_iter()
         .map(|desktop| DesktopState {
             current: desktop.id == current.id,
@@ -79,7 +102,8 @@ pub fn snapshot(
             occupancy: occupancy.remove(&desktop.id).unwrap_or(Occupancy::Empty),
             id: desktop.id,
         })
-        .collect())
+        .collect();
+    Ok(DesktopInventory { states, windows })
 }
 
 // Function purpose: Locates window desktop.
@@ -234,7 +258,7 @@ fn window_is_cloaked(hwnd: HWND) -> bool {
             (&mut cloaked as *mut u32).cast::<c_void>(),
             size_of::<u32>() as u32,
         ) >= 0
-            && cloaked != 0
+            && cloaked & 0x2 != 0
     }
 }
 

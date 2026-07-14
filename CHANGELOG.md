@@ -1,6 +1,13 @@
 <!-- File purpose: Records user-visible changes for each DeskPilot release. -->
 # Changelog
 
+## 0.1.7
+
+- Protect the trailing spare from switch-time occupancy noise and require a qualifying native window create or show event before treating it as consumed.
+- Stop repeated Win+wheel visits to an empty desktop from creating additional desktops when only one user application exists.
+- Add deterministic virtual tests for two hundred noisy scroll visits, real-window consumption, unrelated events, and spare replacement.
+- Count only shell-cloaked inactive application windows instead of every DWM-cloaked helper surface.
+
 ## 0.1.6
 
 - Serialize desktop creation and removal behind an observed-topology fence so delayed Windows enumeration cannot create up to eight duplicate desktops.
