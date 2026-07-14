@@ -1,0 +1,68 @@
+name: Windows interactive integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deskpilot-interactive-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: x86_64-pc-windows-msvc
+
+jobs:
+  smoke:
+    name: Dedicated interactive Windows 11 smoke
+    runs-on: [self-hosted, Windows, X64, deskpilot-interactive]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify interactive Windows 11 session
+        shell: pwsh
+        run: |
+          if (-not [Environment]::UserInteractive) { throw 'Runner is not interactive.' }
+          $os = Get-CimInstance Win32_OperatingSystem
+          if ([int]$os.BuildNumber -lt 26100) { throw "Windows build $($os.BuildNumber) is unsupported." }
+          if (-not [Environment]::Is64BitOperatingSystem) { throw 'Runner is not x64.' }
+          if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { throw 'Explorer is not running.' }
+
+      - name: Install stable Rust MSVC
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add $env:TARGET
+
+      - name: Ensure lockfile
+        shell: pwsh
+        run: |
+          if (-not (Test-Path Cargo.lock)) { cargo generate-lockfile }
+
+      - name: Build release
+        run: cargo build --release --locked --target ${{ env.TARGET }}
+
+      - name: Run isolated interactive smoke
+        shell: pwsh
+        run: .\scripts\smoke-windows.ps1
+
+      - name: Measure resources
+        shell: pwsh
+        run: |
+          .\scripts\measure-resources.ps1 -SampleSeconds 15 |
+            Set-Content -Encoding utf8NoBOM artifacts\windows-smoke\resources.json
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeskPilot-interactive-${{ github.sha }}
+          path: artifacts/windows-smoke/**
+          if-no-files-found: error
+          retention-days: 30
