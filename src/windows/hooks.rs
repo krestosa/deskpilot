@@ -11,16 +11,16 @@ use windows_sys::Win32::System::SystemInformation::GetTickCount64;
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-    VK_F24, VK_LWIN, VK_RWIN,
+    VK_CONTROL, VK_LWIN, VK_RWIN,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
     TranslateMessage, UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT,
-    WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_KEYDOWN, WM_KEYUP, WM_MOUSEWHEEL, WM_QUIT,
-    WM_SYSKEYDOWN, WM_SYSKEYUP,
+    WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_MOUSEWHEEL, WM_QUIT, WM_SYSKEYDOWN,
+    WM_SYSKEYUP,
 };
 
-const WM_RELEASE_START_SUPPRESSOR: u32 = WM_APP + 0x51;
+const SUPPRESSION_MARKER: usize = 0x4450_5752;
 
 static CONTEXT: OnceLock<Arc<HookContext>> = OnceLock::new();
 
@@ -33,8 +33,7 @@ struct HookContext {
     suspended: AtomicBool,
     left_win_down: AtomicBool,
     right_win_down: AtomicBool,
-    suppressor_down: AtomicBool,
-    suppressor_release_queued: AtomicBool,
+    consumed_win_chord: AtomicBool,
     thread_id: AtomicU32,
 }
 
@@ -55,8 +54,7 @@ impl HookController {
             suspended: AtomicBool::new(false),
             left_win_down: AtomicBool::new(false),
             right_win_down: AtomicBool::new(false),
-            suppressor_down: AtomicBool::new(false),
-            suppressor_release_queued: AtomicBool::new(false),
+            consumed_win_chord: AtomicBool::new(false),
             thread_id: AtomicU32::new(0),
         });
         CONTEXT
@@ -120,15 +118,10 @@ fn run_hook_loop(context: &HookContext) -> Result<(), String> {
 
         let mut message: MSG = zeroed();
         while GetMessageW(&mut message, 0, 0, 0) > 0 {
-            if message.message == WM_RELEASE_START_SUPPRESSOR {
-                release_start_suppression(context);
-                continue;
-            }
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
 
-        release_start_suppression(context);
         UnhookWindowsHookEx(mouse_hook);
         UnhookWindowsHookEx(keyboard_hook);
     }
@@ -139,6 +132,10 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
     if code == HC_ACTION as i32 {
         if let Some(context) = CONTEXT.get() {
             let event = unsafe { &*(lparam as *const KBDLLHOOKSTRUCT) };
+            if event.dwExtraInfo == SUPPRESSION_MARKER {
+                return unsafe { CallNextHookEx(0 as HHOOK, code, wparam, lparam) };
+            }
+
             let message = wparam as u32;
             let is_down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
             let is_up = message == WM_KEYUP || message == WM_SYSKEYUP;
@@ -150,11 +147,24 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
                 } else {
                     &context.right_win_down
                 };
+
                 if is_down {
                     target.store(true, Ordering::Release);
                 } else if is_up {
                     target.store(false, Ordering::Release);
-                    queue_suppressor_release_after_win_up(context);
+                    let other_win_down = if key == VK_LWIN {
+                        context.right_win_down.load(Ordering::Acquire)
+                    } else {
+                        context.left_win_down.load(Ordering::Acquire)
+                    };
+
+                    if !other_win_down
+                        && context.consumed_win_chord.swap(false, Ordering::AcqRel)
+                        && send_suppressed_win_release(key)
+                    {
+                        reset_wheel(context);
+                        return 1;
+                    }
                 }
             }
         }
@@ -186,7 +196,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                         config.direction,
                     ) {
                         if context.navigation.send(step).is_ok() {
-                            arm_start_suppression(context);
+                            context.consumed_win_chord.store(true, Ordering::Release);
                             return 1;
                         }
                     }
@@ -212,63 +222,35 @@ fn win_pressed(context: &HookContext) -> bool {
         }
 }
 
-fn queue_suppressor_release_after_win_up(context: &HookContext) {
-    if context.left_win_down.load(Ordering::Acquire)
-        || context.right_win_down.load(Ordering::Acquire)
-        || !context.suppressor_down.load(Ordering::Acquire)
-        || context
-            .suppressor_release_queued
-            .swap(true, Ordering::AcqRel)
-    {
-        return;
-    }
-
-    let thread_id = context.thread_id.load(Ordering::Acquire);
-    if thread_id == 0
-        || unsafe { PostThreadMessageW(thread_id, WM_RELEASE_START_SUPPRESSOR, 0, 0) } == 0
-    {
-        context
-            .suppressor_release_queued
-            .store(false, Ordering::Release);
-    }
-}
-
-fn arm_start_suppression(context: &HookContext) {
-    if context.suppressor_down.swap(true, Ordering::AcqRel) {
-        return;
-    }
-
-    let input = suppressor_input(false);
-    let sent = unsafe { SendInput(1, &input, size_of::<INPUT>() as i32) };
-    if sent != 1 {
-        context.suppressor_down.store(false, Ordering::Release);
-    }
-}
-
-fn release_start_suppression(context: &HookContext) {
-    context
-        .suppressor_release_queued
-        .store(false, Ordering::Release);
-    if !context.suppressor_down.swap(false, Ordering::AcqRel) {
-        return;
-    }
-
-    let input = suppressor_input(true);
+fn send_suppressed_win_release(win_key: u16) -> bool {
+    let inputs = suppressed_win_release_inputs(win_key);
     unsafe {
-        let _ = SendInput(1, &input, size_of::<INPUT>() as i32);
+        SendInput(
+            inputs.len() as u32,
+            inputs.as_ptr(),
+            size_of::<INPUT>() as i32,
+        ) == inputs.len() as u32
     }
 }
 
-fn suppressor_input(key_up: bool) -> INPUT {
+fn suppressed_win_release_inputs(win_key: u16) -> [INPUT; 3] {
+    [
+        keyboard_input(VK_CONTROL, false),
+        keyboard_input(win_key, true),
+        keyboard_input(VK_CONTROL, true),
+    ]
+}
+
+fn keyboard_input(key: u16, key_up: bool) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
-                wVk: VK_F24,
+                wVk: key,
                 wScan: 0,
                 dwFlags: if key_up { KEYEVENTF_KEYUP } else { 0 },
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: SUPPRESSION_MARKER,
             },
         },
     }
@@ -276,16 +258,24 @@ fn suppressor_input(key_up: bool) -> INPUT {
 
 #[cfg(test)]
 mod tests {
-    use super::suppressor_input;
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{KEYEVENTF_KEYUP, VK_F24};
+    use super::suppressed_win_release_inputs;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{KEYEVENTF_KEYUP, VK_CONTROL, VK_LWIN};
 
     #[test]
-    fn start_suppression_holds_neutral_key_until_win_release() {
-        let down = unsafe { suppressor_input(false).Anonymous.ki };
-        let up = unsafe { suppressor_input(true).Anonymous.ki };
-        assert_eq!(down.wVk, VK_F24);
-        assert_eq!(down.dwFlags, 0);
-        assert_eq!(up.wVk, VK_F24);
-        assert_eq!(up.dwFlags, KEYEVENTF_KEYUP);
+    fn start_suppression_replaces_physical_win_up_with_control_chord() {
+        let inputs = suppressed_win_release_inputs(VK_LWIN);
+        let control_down = unsafe { inputs[0].Anonymous.ki };
+        let win_up = unsafe { inputs[1].Anonymous.ki };
+        let control_up = unsafe { inputs[2].Anonymous.ki };
+
+        assert_eq!(control_down.wVk, VK_CONTROL);
+        assert_eq!(control_down.dwFlags, 0);
+        assert_eq!(win_up.wVk, VK_LWIN);
+        assert_eq!(win_up.dwFlags, KEYEVENTF_KEYUP);
+        assert_eq!(control_up.wVk, VK_CONTROL);
+        assert_eq!(control_up.dwFlags, KEYEVENTF_KEYUP);
+        assert_ne!(control_down.dwExtraInfo, 0);
+        assert_eq!(control_down.dwExtraInfo, win_up.dwExtraInfo);
+        assert_eq!(win_up.dwExtraInfo, control_up.dwExtraInfo);
     }
 }

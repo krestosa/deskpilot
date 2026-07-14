@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4
+
+- Intercepted the final physical Windows-key release after a consumed Win+wheel gesture and replaced it with a marked Control+Windows release sequence so Start cannot treat the gesture as a standalone Win press.
+- Replaced global unknown-occupancy poisoning with direct per-desktop membership checks when normal window mapping fails.
+- Counted inaccessible but mappable top-level application windows as occupied while excluding Explorer and DWM shell surfaces.
+- Preserved the active desktop while allowing all other consecutive empty desktops to compact to exactly one trailing spare.
+
 ## 0.1.3
 
 - Held a neutral `F24` chord from a consumed Win+wheel gesture until after the physical Windows-key release, preventing Start from treating the gesture as a standalone Win press.

@@ -55,9 +55,11 @@ impl WinvdBackend {
     pub fn version(&self) -> WindowsVersion {
         self.version
     }
+
     pub fn compatible(&self) -> bool {
         self.compatible
     }
+
     pub fn compatibility_reason(&self) -> &str {
         &self.compatibility_reason
     }
@@ -142,6 +144,12 @@ impl WinvdBackend {
         let desktop = winvd::get_desktop_by_window(to_win_hwnd(hwnd)).map_err(format_error)?;
         let id = desktop.get_id().map_err(format_error)?;
         Ok(DesktopId(format!("{id:?}")))
+    }
+
+    pub fn is_window_on_desktop(&self, hwnd: HWND, desktop: &DesktopId) -> Result<bool, String> {
+        self.require_compatible()?;
+        let desktop = self.find(desktop)?;
+        winvd::is_window_on_desktop(desktop.index as u32, to_win_hwnd(hwnd)).map_err(format_error)
     }
 
     pub fn is_window_pinned(&self, hwnd: HWND) -> Result<bool, String> {
