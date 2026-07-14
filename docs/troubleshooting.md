@@ -8,6 +8,8 @@ Start the tray process with `DeskPilot.exe`, or run `DeskPilot.exe run --foregro
 
 Run `DeskPilot.exe doctor --json`. DeskPilot intentionally disables desktop mutation on unrecognized build families. Do not bypass the gate: update the pinned backend and compatibility evidence instead.
 
+DeskPilot 0.1.0 could incorrectly report `6.2.9200.<revision>` on Windows 11 because the version API was manifest-virtualized. Upgrade to 0.1.1 or later. A real Windows 11 report must begin with `10.0` and include the actual build, for example `10.0.26100.<revision>`.
+
 ## Configuration fails to load
 
 Run:
