@@ -1,0 +1,48 @@
+name: Apply Clippy fixes
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches: [main]
+    paths: ['.github/workflows/apply-clippy-fixes.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deskpilot-apply-clippy-fixes
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/portable-dynamic-desktop-manager
+          fetch-depth: 0
+      - name: Install stable Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add rustfmt clippy
+      - name: Apply compiler-suggested fixes
+        shell: pwsh
+        run: |
+          cargo clippy --fix --workspace --all-targets --locked --allow-dirty --allow-staged -- -D warnings
+          cargo fmt --all
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+          Remove-Item .github\workflows\apply-clippy-fixes.yml -Force
+          git add Cargo.toml Cargo.lock src tests .github\workflows\apply-clippy-fixes.yml
+          git diff --cached --check
+      - name: Publish fixes
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Apply Rust 1.97 Clippy recommendations'
+          git push origin HEAD:feature/portable-dynamic-desktop-manager
