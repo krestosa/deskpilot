@@ -21,6 +21,12 @@ fn states(values: &[Occupancy]) -> Vec<DesktopState> {
         .collect()
 }
 
+fn set_current(snapshot: &mut [DesktopState], current: usize) {
+    for (index, desktop) in snapshot.iter_mut().enumerate() {
+        desktop.current = index == current;
+    }
+}
+
 #[test]
 fn occupied_creates_trailing_spare() {
     let result = plan(&states(&[Occupancy::Occupied]));
@@ -51,7 +57,35 @@ fn duplicate_trailing_empty_is_removed() {
 }
 
 #[test]
-fn internal_empty_is_removed() {
+fn active_last_trailing_empty_is_preserved() {
+    let mut snapshot = states(&[Occupancy::Occupied, Occupancy::Empty, Occupancy::Empty]);
+    set_current(&mut snapshot, 2);
+    let result = plan(&snapshot);
+    assert_eq!(
+        result.mutations,
+        vec![Mutation::Remove {
+            desktop: DesktopId("desktop-1".to_string()),
+            fallback: DesktopId("desktop-2".to_string()),
+        }]
+    );
+}
+
+#[test]
+fn active_first_trailing_empty_is_preserved() {
+    let mut snapshot = states(&[Occupancy::Occupied, Occupancy::Empty, Occupancy::Empty]);
+    set_current(&mut snapshot, 1);
+    let result = plan(&snapshot);
+    assert_eq!(
+        result.mutations,
+        vec![Mutation::Remove {
+            desktop: DesktopId("desktop-2".to_string()),
+            fallback: DesktopId("desktop-1".to_string()),
+        }]
+    );
+}
+
+#[test]
+fn internal_empty_is_removed_into_trailing_spare() {
     let result = plan(&states(&[
         Occupancy::Occupied,
         Occupancy::Empty,
@@ -62,7 +96,7 @@ fn internal_empty_is_removed() {
         result.mutations,
         vec![Mutation::Remove {
             desktop: DesktopId("desktop-1".to_string()),
-            fallback: DesktopId("desktop-0".to_string()),
+            fallback: DesktopId("desktop-3".to_string()),
         }]
     );
 }
@@ -85,30 +119,17 @@ fn unknown_desktop_is_never_removed() {
 }
 
 #[test]
-fn current_internal_empty_switches_before_removal() {
+fn current_internal_empty_is_never_switched_or_removed() {
     let mut snapshot = states(&[
         Occupancy::Occupied,
         Occupancy::Empty,
         Occupancy::Occupied,
         Occupancy::Empty,
     ]);
-    for value in &mut snapshot {
-        value.current = false;
-    }
-    snapshot[1].current = true;
+    set_current(&mut snapshot, 1);
     let result = plan(&snapshot);
-    assert_eq!(
-        result.mutations,
-        vec![
-            Mutation::Switch {
-                desktop: DesktopId("desktop-0".to_string()),
-            },
-            Mutation::Remove {
-                desktop: DesktopId("desktop-1".to_string()),
-                fallback: DesktopId("desktop-0".to_string()),
-            },
-        ]
-    );
+    assert!(result.stable);
+    assert!(result.mutations.is_empty());
 }
 
 #[test]
@@ -173,6 +194,13 @@ impl ReconcileBackend for FakeBackend {
         if self.fail_remove {
             return Err("removal failed".to_string());
         }
+        assert!(
+            self.desktops
+                .iter()
+                .find(|state| &state.id == desktop)
+                .is_none_or(|state| !state.current),
+            "the reconciler must never remove the active desktop"
+        );
         self.desktops.retain(|state| &state.id != desktop);
         self.operations.push(format!("remove:{}", desktop.0));
         Ok(())
@@ -221,7 +249,7 @@ fn failed_removal_does_not_lose_state() {
 }
 
 #[test]
-fn reconciler_never_moves_or_closes_windows() {
+fn reconciler_never_switches_desktops() {
     let mut backend = FakeBackend::from(&[
         Occupancy::Occupied,
         Occupancy::Empty,
@@ -232,7 +260,5 @@ fn reconciler_never_moves_or_closes_windows() {
     assert!(backend
         .operations
         .iter()
-        .all(|operation| operation.starts_with("create")
-            || operation.starts_with("switch")
-            || operation.starts_with("remove")));
+        .all(|operation| operation.starts_with("create") || operation.starts_with("remove")));
 }

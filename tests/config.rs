@@ -1,4 +1,4 @@
-use deskpilot::config::{Config, ConfigError, CONFIG_SCHEMA_VERSION};
+use deskpilot::config::{Config, ConfigError, NavigationMode, CONFIG_SCHEMA_VERSION};
 use std::fs;
 use tempfile::tempdir;
 
@@ -6,6 +6,7 @@ use tempfile::tempdir;
 fn defaults_are_valid_and_versioned() {
     let config = Config::default();
     assert_eq!(config.schema_version, CONFIG_SCHEMA_VERSION);
+    assert_eq!(config.wheel.navigation, NavigationMode::Wrap);
     config.validate().expect("defaults must validate");
 }
 
@@ -49,5 +50,6 @@ fn missing_schema_version_migrates_to_current_default() {
     fs::write(&path, "enabled = false\n").expect("write fixture");
     let config = Config::load(&path).expect("legacy v0-compatible file should load");
     assert_eq!(config.schema_version, CONFIG_SCHEMA_VERSION);
+    assert_eq!(config.wheel.navigation, NavigationMode::Wrap);
     assert!(!config.enabled);
 }
