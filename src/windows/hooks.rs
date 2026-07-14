@@ -259,9 +259,7 @@ fn keyboard_input(key: u16, key_up: bool) -> INPUT {
 #[cfg(test)]
 mod tests {
     use super::suppressed_win_release_inputs;
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        KEYEVENTF_KEYUP, VK_CONTROL, VK_LWIN,
-    };
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{KEYEVENTF_KEYUP, VK_CONTROL, VK_LWIN};
 
     #[test]
     fn start_suppression_replaces_physical_win_up_with_control_chord() {

@@ -146,11 +146,7 @@ impl WinvdBackend {
         Ok(DesktopId(format!("{id:?}")))
     }
 
-    pub fn is_window_on_desktop(
-        &self,
-        hwnd: HWND,
-        desktop: &DesktopId,
-    ) -> Result<bool, String> {
+    pub fn is_window_on_desktop(&self, hwnd: HWND, desktop: &DesktopId) -> Result<bool, String> {
         self.require_compatible()?;
         let desktop = self.find(desktop)?;
         winvd::is_window_on_desktop(desktop.index as u32, to_win_hwnd(hwnd)).map_err(format_error)
