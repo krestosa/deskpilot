@@ -12,15 +12,39 @@ New-Item -ItemType Directory -Path $dataDir | Out-Null
 $args = @('--data-dir', $dataDir, 'run', '--foreground', '--no-tray')
 if ($SafeMode) { $args += @('--no-hook', '--no-dynamic') }
 
+function Invoke-DeskPilotRaw {
+    param([string[]]$Arguments)
+    $start = [System.Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $exe
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.ArgumentList.Add('--data-dir')
+    $start.ArgumentList.Add($dataDir)
+    foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) }
+    $probe = [System.Diagnostics.Process]::new()
+    $probe.StartInfo = $start
+    $null = $probe.Start()
+    $stdout = $probe.StandardOutput.ReadToEnd()
+    $stderr = $probe.StandardError.ReadToEnd()
+    $probe.WaitForExit()
+    return [pscustomobject]@{
+        ExitCode = $probe.ExitCode
+        Stdout = $stdout.TrimEnd()
+        Stderr = $stderr.TrimEnd()
+    }
+}
+
 $timer = [System.Diagnostics.Stopwatch]::StartNew()
 $process = Start-Process -FilePath $exe -ArgumentList $args -PassThru -WindowStyle Hidden
 try {
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     do {
         Start-Sleep -Milliseconds 50
-        $status = & $exe --data-dir $dataDir status --json 2>$null
-    } while ($LASTEXITCODE -ne 0 -and [DateTime]::UtcNow -lt $deadline)
-    if ($LASTEXITCODE -ne 0) { throw 'DeskPilot did not become IPC-ready.' }
+        $status = Invoke-DeskPilotRaw -Arguments @('status', '--json')
+    } while ($status.ExitCode -ne 0 -and [DateTime]::UtcNow -lt $deadline)
+    if ($status.ExitCode -ne 0) { throw "DeskPilot did not become IPC-ready: $($status.Stderr)" }
     $timer.Stop()
 
     $process.Refresh()
@@ -49,7 +73,7 @@ try {
     $result | ConvertTo-Json -Depth 4
 }
 finally {
-    & $exe --data-dir $dataDir shutdown *> $null
+    $null = Invoke-DeskPilotRaw -Arguments @('shutdown')
     if (-not $process.HasExited) {
         $process.WaitForExit(5000) | Out-Null
     }
