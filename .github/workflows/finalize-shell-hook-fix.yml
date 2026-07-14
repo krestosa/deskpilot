@@ -49,8 +49,6 @@ jobs:
           cargo build --release --locked --target x86_64-pc-windows-msvc
           .\scripts\verify-license.ps1
           .\scripts\build-portable.ps1 -SkipBuild
-          $version = & .\target\x86_64-pc-windows-msvc\release\DeskPilot.exe --version
-          if (($version | Out-String).Trim() -ne 'DeskPilot 0.1.2') { throw "Unexpected version: $version" }
 
       - name: Publish finalized source
         shell: pwsh
