@@ -20,17 +20,32 @@ Run:
 
 Unknown keys, invalid enum values and out-of-range numbers are errors. DeskPilot reports the file and parser/validation cause and does not rewrite the invalid file.
 
-## Win+wheel does nothing
+## Win+wheel works and then becomes blocked on an empty desktop
 
-Check `enabled`, `wheel.threshold`, `wheel.cooldown_ms`, fullscreen suspension and `doctor.hook_state`. Use `run --foreground` and `events --json` in separate terminals. `run --no-hook` can isolate backend/IPC behavior.
+DeskPilot 0.1.1 could mistake the Windows desktop, Start or another shell surface for an exclusive-fullscreen application and suspend the input hook. Upgrade to 0.1.2 or later. The fullscreen detector now requires a visible, non-cloaked user application and explicitly excludes shell hosts.
+
+If the problem persists, temporarily set:
+
+```toml
+[windows]
+suspend_in_exclusive_fullscreen = false
+```
+
+Reload the configuration and collect `doctor --json`, `events --json` and a support bundle.
 
 ## Start opens after Win+wheel
 
-Stop DeskPilot and retain `doctor`, event stream and logs in a support bundle. This is a release-blocking input regression for the affected Windows build or device; do not work around it by globally disabling the Windows key.
+Upgrade to 0.1.2 or later. Earlier builds used `VK_NONAME`, which does not reliably mark the Windows key as part of a chord on every Windows build. DeskPilot now emits a complete synthetic Control down/up pair only after processing Win+wheel.
+
+Do not work around the issue by globally disabling the Windows key. If Start still opens, retain `doctor`, event stream and logs in a support bundle because the input sequence remains build/device-specific.
 
 ## A desktop is not removed
 
-DeskPilot will preserve a desktop when occupancy is unknown, a window is pinned, the empty grace period has not elapsed, or the backend rejects removal. This conservative behavior is intentional. Inspect the occupancy summary and recent errors in `doctor`.
+DeskPilot preserves the active desktop even when it is empty. If desktop 2 becomes empty while you remain on desktop 3, DeskPilot removes the non-current empty desktop and the current desktop is renumbered; it does not force you away from the desktop you are using.
+
+DeskPilot also preserves a desktop when occupancy is unknown, a window is pinned, the empty grace period has not elapsed, or the backend rejects removal. Version 0.1.2 narrows unknown occupancy to plausible user-application windows and ignores shell/auxiliary surfaces that previously blocked cleanup.
+
+Inspect the occupancy summary and recent errors in `doctor` when cleanup still does not occur.
 
 ## Portable directory is read-only
 
