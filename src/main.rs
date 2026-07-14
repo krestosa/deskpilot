@@ -4,10 +4,16 @@ use deskpilot::cli::{Command, Invocation, HELP};
 use deskpilot::config::Config;
 use deskpilot::ipc::{send_request, stream_events, IpcRequest};
 use deskpilot::reconciliation::{plan, DesktopId, DesktopState, Occupancy};
+use deskpilot::windows::util::wide;
 use deskpilot::{APP_VERSION, CONFIG_FILE_NAME};
 use std::path::{Path, PathBuf};
+use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+};
 use windows_sys::Win32::System::Console::{
-    AttachConsole, SetConsoleOutputCP, ATTACH_PARENT_PROCESS,
+    AttachConsole, GetStdHandle, SetConsoleOutputCP, SetStdHandle, ATTACH_PARENT_PROCESS,
+    STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
 };
 
 fn main() {
@@ -190,6 +196,30 @@ fn attach_console() {
     unsafe {
         let _ = AttachConsole(ATTACH_PARENT_PROCESS);
         let _ = SetConsoleOutputCP(65001);
+        repair_standard_handle(STD_OUTPUT_HANDLE);
+        repair_standard_handle(STD_ERROR_HANDLE);
+    }
+}
+
+unsafe fn repair_standard_handle(kind: u32) {
+    let current = unsafe { GetStdHandle(kind) };
+    if current != 0 && current != INVALID_HANDLE_VALUE {
+        return;
+    }
+    let target = wide("CONOUT$");
+    let handle = unsafe {
+        CreateFileW(
+            target.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            0,
+            0,
+        )
+    };
+    if handle != INVALID_HANDLE_VALUE {
+        let _ = unsafe { SetStdHandle(kind, handle) };
     }
 }
 
