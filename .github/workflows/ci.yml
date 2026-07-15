@@ -54,7 +54,7 @@ jobs:
 
       - name: Install pinned cargo-audit
         shell: pwsh
-        run: cargo install cargo-audit --version 0.22.2 --locked
+        run: cargo install cargo-audit --version 0.22.1 --locked
 
       - name: Audit Rust dependencies
         shell: pwsh
