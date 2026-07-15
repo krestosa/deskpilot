@@ -1,0 +1,150 @@
+            }
+            "startup enable" => std::env::current_exe()
+                .map_err(|error| error.to_string())
+                .and_then(|executable| startup::enable(&executable, &self.data_dir))
+                .map_or_else(
+                    |error| IpcResponse::failure(74, error),
+                    |()| IpcResponse::message("startup enabled"),
+                ),
+            "startup disable" => startup::disable().map_or_else(
+                |error| IpcResponse::failure(74, error),
+                |()| IpcResponse::message("startup disabled"),
+            ),
+            "shutdown" => {
+                self.shutdown = true;
+                IpcResponse::message("shutdown requested")
+            }
+            "__wake" => IpcResponse::message("awake"),
+            _ => IpcResponse::failure(64, format!("unknown IPC command: {command}")),
+        };
+        let _ = request.response.send(response);
+        reconcile
+    }
+
+    fn reload(&mut self) -> Result<(), String> {
+        let config = Config::load(&self.config_path).map_err(|error| error.to_string())?;
+        if let Some(logger) = Logger::global() {
+            logger
+                .reconfigure(config.logging.clone())
+                .map_err(|error| error.to_string())?;
+        }
+        let mut target = self
+            .config
+            .write()
+            .map_err(|_| "configuration lock poisoned".to_string())?;
+        *target = config;
+        drop(target);
+        self.publish("configuration-reloaded", "configuration reloaded");
+        Ok(())
+    }
+
+    fn status(&self) -> serde_json::Value {
+        let config = self.config_read();
+        json!({
+            "version": APP_VERSION,
+            "enabled": config.enabled,
+            "dynamic": config.desktops.dynamic && !self.dynamic_forced_off,
+            "direction": config.wheel.direction,
+            "navigation": config.wheel.navigation,
+            "backend_compatible": self.backend.compatible(),
+            "last_reconciliation": self.last_reconciliation,
+            "data_directory": self.data_dir,
+        })
+    }
+
+    fn doctor(&self) -> DoctorReport {
+        let config = self.config_read();
+        let version = self.backend.version();
+        let capabilities = self.backend.capabilities();
+        let snapshot_result = self.diagnostic_snapshot();
+        let snapshot_error = snapshot_result.as_ref().err().cloned();
+        let snapshot = snapshot_result.ok();
+        let occupancy = snapshot.as_ref().map_or(
+            OccupancyDiagnostic {
+                occupied: 0,
+                empty: 0,
+                unknown: 0,
+            },
+            |states| OccupancyDiagnostic {
+                occupied: states
+                    .iter()
+                    .filter(|state| state.occupancy == Occupancy::Occupied)
+                    .count(),
+                empty: states
+                    .iter()
+                    .filter(|state| state.occupancy == Occupancy::Empty)
+                    .count(),
+                unknown: states
+                    .iter()
+                    .filter(|state| state.occupancy == Occupancy::Unknown)
+                    .count(),
+            },
+        );
+        let current = self.backend.current().ok();
+        DoctorReport {
+            timestamp: timestamp_utc(),
+            app: APP_NAME.to_string(),
+            app_version: APP_VERSION.to_string(),
+            executable_path: std::env::current_exe().unwrap_or_default(),
+            data_directory: self.data_dir.clone(),
+            configuration_status: if config.validate().is_ok() {
+                "valid".to_string()
+            } else {
+                "invalid".to_string()
+            },
+            windows_version: format!(
+                "{}.{}.{}.{}",
+                version.major, version.minor, version.build, version.revision
+            ),
+            windows_build: version.build,
+            windows_revision: version.revision,
+            process_architecture: std::env::consts::ARCH.to_string(),
+            integrity_level: system::integrity_level(),
+            interactive_session: system::is_interactive_session(),
+            explorer_running: system::explorer_running(),
+            backend: BackendDiagnostic {
+                name: "winvd 0.0.49".to_string(),
+                compatible: self.backend.compatible(),
+                capabilities: [
+                    (capabilities.enumerate, "enumerate"),
+                    (capabilities.switch, "switch"),
+                    (capabilities.create, "create"),
+                    (capabilities.remove, "remove"),
+                    (capabilities.window_mapping, "window-mapping"),
+                    (capabilities.pin_detection, "pin-detection"),
+                ]
+                .into_iter()
+                .filter_map(|(enabled, name)| enabled.then_some(name.to_string()))
+                .collect(),
+                error: (!self.backend.compatible())
+                    .then(|| self.backend.compatibility_reason().to_string()),
+            },
+            desktop_count: snapshot.as_ref().map(Vec::len),
+            current_desktop: current.map(|desktop| desktop.id.0),
+            occupancy,
+            snapshot_error,
+            hook_state: self.hook_state.clone(),
+            ipc_state: self.ipc_state.clone(),
+            dynamic_reconciliation: if config.desktops.dynamic && !self.dynamic_forced_off {
+                "enabled"
+            } else {
+                "disabled"
+            }
+            .to_string(),
+            last_reconciliation: self.last_reconciliation.clone(),
+            recent_errors: Logger::global().map_or_else(Vec::new, Logger::recent_errors),
+            portable_write_test: system::portable_write_test(&self.data_dir),
+        }
+    }
+
+    fn update_tray(&self, tray: Option<&Tray>) {
+        if let Some(tray) = tray {
+            let config = self.config_read();
+            let backend_ready = self.backend.compatible();
+            tray.state().update(
+                config.enabled,
+                config.desktops.dynamic && !self.dynamic_forced_off,
+                config.wheel.direction,
+                config.wheel.navigation,
+                startup::is_enabled(),
+                backend_ready,
