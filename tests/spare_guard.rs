@@ -1,4 +1,4 @@
-// File purpose: Reproduces repeated scroll visits to a noisy empty spare and proves only persistent visible event-confirmed user windows can consume it.
+// File purpose: Reproduces noisy scroll navigation and proves both newly opened and pre-existing real applications consume exactly one trailing spare.
 use deskpilot::reconciliation::{
     plan, DesktopId, DesktopState, Mutation, Occupancy, SpareGuard, WindowToken,
 };
@@ -13,18 +13,17 @@ fn state(index: usize, occupancy: Occupancy, current: bool) -> DesktopState {
     }
 }
 
-// Function purpose: Verifies repeated scroll visits cannot convert switch-time shell noise into additional desktop creation.
+// Function purpose: Verifies repeated scroll visits cannot convert raw switch-time occupancy noise into additional desktop creation.
 #[test]
 fn one_app_plus_repeated_scroll_stays_at_two_desktops() {
     let mut guard = SpareGuard::default();
     let spare = DesktopId("desktop-1".to_string());
-    let candidates = HashSet::new();
 
     let mut initial = vec![
         state(0, Occupancy::Occupied, true),
         state(1, Occupancy::Empty, false),
     ];
-    guard.stabilize(&mut initial, &HashMap::new(), &candidates);
+    guard.stabilize(&mut initial, &HashMap::new(), &HashSet::new());
     assert_eq!(guard.protected(), Some(&spare));
 
     for iteration in 0..200 {
@@ -33,8 +32,7 @@ fn one_app_plus_repeated_scroll_stays_at_two_desktops() {
             state(0, Occupancy::Occupied, iteration % 2 == 0),
             state(1, Occupancy::Occupied, iteration % 2 != 0),
         ];
-        let visible_windows = HashMap::from([(spare.clone(), HashSet::from([9001]))]);
-        let result = guard.stabilize(&mut noisy, &visible_windows, &candidates);
+        let result = guard.stabilize(&mut noisy, &HashMap::new(), &HashSet::new());
         assert!(result.protecting);
         assert!(!result.consumed);
         assert!(!guard.needs_confirmation());
@@ -43,21 +41,42 @@ fn one_app_plus_repeated_scroll_stays_at_two_desktops() {
     }
 }
 
-// Function purpose: Verifies a visible qualifying window must survive two observations before it can authorize one new trailing desktop.
+// Function purpose: Verifies changing transient helper tokens never survive long enough to consume the protected spare.
+#[test]
+fn changing_transient_surfaces_cannot_consume_spare() {
+    let mut guard = SpareGuard::default();
+    let spare = DesktopId("desktop-1".to_string());
+    guard.arm(spare.clone());
+
+    for token in 1..=100 {
+        let mut states = vec![
+            state(0, Occupancy::Occupied, false),
+            state(1, Occupancy::Occupied, true),
+        ];
+        let windows = HashMap::from([(spare.clone(), HashSet::from([token]))]);
+        let result = guard.stabilize(&mut states, &windows, &HashSet::new());
+        assert!(result.protecting);
+        assert!(!result.consumed);
+        assert_eq!(states[1].occupancy, Occupancy::Empty);
+        assert!(plan(&states).mutations.is_empty());
+    }
+}
+
+// Function purpose: Verifies a newly opened event-backed window needs two observations before authorizing one new trailing desktop.
 #[test]
 fn persistent_real_window_event_consumes_spare_once() {
     let mut guard = SpareGuard::default();
     let spare = DesktopId("desktop-1".to_string());
     guard.arm(spare.clone());
     let token: WindowToken = 42;
-    let visible_windows = HashMap::from([(spare.clone(), HashSet::from([token]))]);
+    let windows = HashMap::from([(spare.clone(), HashSet::from([token]))]);
     let candidates = HashSet::from([token]);
+
     let mut first = vec![
         state(0, Occupancy::Occupied, false),
         state(1, Occupancy::Occupied, true),
     ];
-
-    let first_result = guard.stabilize(&mut first, &visible_windows, &candidates);
+    let first_result = guard.stabilize(&mut first, &windows, &candidates);
     assert!(first_result.protecting);
     assert!(!first_result.consumed);
     assert!(guard.needs_confirmation());
@@ -67,12 +86,40 @@ fn persistent_real_window_event_consumes_spare_once() {
         state(0, Occupancy::Occupied, false),
         state(1, Occupancy::Occupied, true),
     ];
-    let second_result = guard.stabilize(&mut second, &visible_windows, &candidates);
+    let second_result = guard.stabilize(&mut second, &windows, &candidates);
     assert!(second_result.consumed);
     assert!(!second_result.protecting);
     assert_eq!(guard.protected(), None);
     assert!(!guard.needs_confirmation());
     assert_eq!(plan(&second).mutations, vec![Mutation::CreateTrailing]);
+}
+
+// Function purpose: Verifies a pre-existing File Explorer or other eligible application consumes the spare after three stable observations even when its create event was missed.
+#[test]
+fn preexisting_persistent_application_consumes_spare() {
+    let mut guard = SpareGuard::default();
+    let spare = DesktopId("desktop-1".to_string());
+    guard.arm(spare.clone());
+    let token: WindowToken = 84;
+    let windows = HashMap::from([(spare.clone(), HashSet::from([token]))]);
+
+    for observation in 1..=3 {
+        let mut states = vec![
+            state(0, Occupancy::Occupied, false),
+            state(1, Occupancy::Occupied, true),
+        ];
+        let result = guard.stabilize(&mut states, &windows, &HashSet::new());
+        if observation < 3 {
+            assert!(result.protecting);
+            assert!(!result.consumed);
+            assert!(guard.needs_confirmation());
+            assert_eq!(states[1].occupancy, Occupancy::Empty);
+            assert!(plan(&states).mutations.is_empty());
+        } else {
+            assert!(result.consumed);
+            assert_eq!(plan(&states).mutations, vec![Mutation::CreateTrailing]);
+        }
+    }
 }
 
 // Function purpose: Verifies a transient event-backed surface that disappears before confirmation cannot consume the spare.
@@ -113,13 +160,10 @@ fn unrelated_window_event_does_not_consume_spare() {
         state(0, Occupancy::Occupied, true),
         state(1, Occupancy::Occupied, false),
     ];
-    let visible_windows = HashMap::from([
-        (DesktopId("desktop-0".to_string()), HashSet::from([77])),
-        (spare.clone(), HashSet::from([9001])),
-    ]);
+    let windows = HashMap::from([(DesktopId("desktop-0".to_string()), HashSet::from([77]))]);
     let candidates = HashSet::from([77]);
 
-    let result = guard.stabilize(&mut states, &visible_windows, &candidates);
+    let result = guard.stabilize(&mut states, &windows, &candidates);
     assert!(result.protecting);
     assert!(!result.consumed);
     assert!(!guard.needs_confirmation());

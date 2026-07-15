@@ -70,7 +70,7 @@ pub fn detailed_snapshot(
         }
 
         if let Ok(executable) = executable_name(identity.process_id) {
-            if ignored_shell_executable(&executable)
+            if ignored_process_window(&executable, &identity.class_name)
                 || config
                     .windows
                     .ignore_executables
@@ -87,7 +87,7 @@ pub fn detailed_snapshot(
 
         if let Some(desktop) = locate_window_desktop(backend, &desktops, &current.id, hwnd) {
             occupancy.insert(desktop.clone(), Occupancy::Occupied);
-            if window_is_visible_user_surface(hwnd) {
+            if window_is_confirmable_user_surface(hwnd) {
                 windows
                     .entry(desktop)
                     .or_default()
@@ -158,7 +158,7 @@ pub fn exclusive_fullscreen_active() -> bool {
         let Ok(executable) = executable_name(identity.process_id) else {
             return false;
         };
-        if ignored_shell_executable(&executable) {
+        if ignored_process_window(&executable, &identity.class_name) {
             return false;
         }
 
@@ -278,9 +278,11 @@ fn window_is_shell_cloaked(hwnd: HWND) -> bool {
     window_cloak_flags(hwnd) & 0x2 != 0
 }
 
-// Function purpose: Restricts spare-consumption evidence to an actually visible, non-cloaked user surface on the current desktop.
-fn window_is_visible_user_surface(hwnd: HWND) -> bool {
-    (unsafe { IsWindowVisible(hwnd) != 0 }) && !window_is_cloaked(hwnd)
+// Function purpose: Accepts a visible current-desktop window or a virtual-desktop-cloaked inactive window as persistent user-surface evidence.
+fn window_is_confirmable_user_surface(hwnd: HWND) -> bool {
+    let visible = unsafe { IsWindowVisible(hwnd) != 0 };
+    let cloak_flags = window_cloak_flags(hwnd);
+    (visible && cloak_flags == 0) || cloak_flags & 0x2 != 0
 }
 
 // Function purpose: Performs the executable name operation required by this module.
@@ -315,7 +317,6 @@ fn ignored_shell_executable(executable: &str) -> bool {
         "backgroundTaskHost.exe",
         "ctfmon.exe",
         "dwm.exe",
-        "explorer.exe",
         "LockApp.exe",
         "RuntimeBroker.exe",
         "SearchHost.exe",
@@ -333,6 +334,22 @@ fn ignored_shell_executable(executable: &str) -> bool {
     EXECUTABLES
         .iter()
         .any(|value| value.eq_ignore_ascii_case(executable))
+}
+
+// Function purpose: Ignores Explorer shell infrastructure while preserving actual File Explorer application windows.
+fn ignored_process_window(executable: &str, class_name: &str) -> bool {
+    if executable.eq_ignore_ascii_case("explorer.exe") {
+        !is_file_explorer_class(class_name)
+    } else {
+        ignored_shell_executable(executable)
+    }
+}
+
+// Function purpose: Recognizes the top-level Win32 classes used by real File Explorer windows.
+fn is_file_explorer_class(class_name: &str) -> bool {
+    ["CabinetWClass", "ExploreWClass"]
+        .iter()
+        .any(|value| value.eq_ignore_ascii_case(class_name))
 }
 
 // Function purpose: Performs the ignored class operation required by this module.
@@ -367,7 +384,7 @@ fn ignored_class(class_name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ignored_class, ignored_shell_executable, rect_covers};
+    use super::{ignored_class, ignored_process_window, ignored_shell_executable, rect_covers};
     use windows_sys::Win32::Foundation::RECT;
 
     // Function purpose: Verifies the shell surfaces are not user applications scenario and its expected safety or state invariant.
@@ -379,8 +396,12 @@ mod tests {
         assert!(ignored_shell_executable("StartMenuExperienceHost.exe"));
         assert!(ignored_shell_executable("searchhost.EXE"));
         assert!(ignored_shell_executable("RuntimeBroker.exe"));
-        assert!(ignored_shell_executable("explorer.exe"));
+        assert!(!ignored_shell_executable("explorer.exe"));
         assert!(!ignored_shell_executable("notepad.exe"));
+        assert!(ignored_process_window("explorer.exe", "Progman"));
+        assert!(ignored_process_window("explorer.exe", "Shell_TrayWnd"));
+        assert!(!ignored_process_window("explorer.exe", "CabinetWClass"));
+        assert!(!ignored_process_window("EXPLORER.EXE", "ExploreWClass"));
     }
 
     // Function purpose: Verifies the fullscreen requires monitor coverage scenario and its expected safety or state invariant.
