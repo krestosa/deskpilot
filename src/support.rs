@@ -1,5 +1,6 @@
 // File purpose: Creates privacy-preserving support bundles and computes their SHA-256 manifest.
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -22,7 +23,6 @@ struct Manifest {
     files: BTreeMap<String, ManifestEntry>,
 }
 
-// Function purpose: Performs the redacted config toml operation required by this module.
 pub fn redacted_config_toml(config: &Config) -> Result<String, String> {
     let mut redacted = config.clone();
     redact_rules(&mut redacted.windows.ignore_executables);
@@ -30,7 +30,7 @@ pub fn redacted_config_toml(config: &Config) -> Result<String, String> {
     toml::to_string_pretty(&redacted).map_err(|error| error.to_string())
 }
 
-// Function purpose: Writes a redacted local support archive with diagnostics, bounded logs, a manifest, and checksums.
+// Function purpose: Writes a local archive after redacting user paths, desktop identifiers, pipe names, rules, and log text.
 pub fn create_support_bundle(
     data_dir: &Path,
     doctor_json: &str,
@@ -39,6 +39,7 @@ pub fn create_support_bundle(
     let config: Config = toml::from_str(config_toml)
         .map_err(|error| format!("support bundle configuration parse failed: {error}"))?;
     let redacted_config = redacted_config_toml(&config)?;
+    let redacted_doctor = redact_doctor_json(doctor_json, data_dir)?;
     let output = data_dir.join(format!("deskpilot-support-{}.zip", safe_timestamp()));
     let file = File::create(&output).map_err(|error| error.to_string())?;
     let mut zip = zip::ZipWriter::new(file);
@@ -51,8 +52,8 @@ pub fn create_support_bundle(
     add_bytes(
         &mut zip,
         options,
-        "doctor.json",
-        doctor_json.as_bytes(),
+        "doctor.redacted.json",
+        &redacted_doctor,
         &mut manifest,
     )?;
     add_bytes(
@@ -83,11 +84,13 @@ pub fn create_support_bundle(
                 .is_ok()
             {
                 if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+                    let text = String::from_utf8_lossy(&data);
+                    let redacted = redact_text(&text, data_dir);
                     add_bytes(
                         &mut zip,
                         options,
                         &format!("logs/{name}"),
-                        &data,
+                        redacted.as_bytes(),
                         &mut manifest,
                     )?;
                 }
@@ -110,7 +113,63 @@ pub fn create_support_bundle(
     Ok(output)
 }
 
-// Function purpose: Redacts rules.
+fn redact_doctor_json(doctor_json: &str, data_dir: &Path) -> Result<Vec<u8>, String> {
+    let mut doctor: Value = serde_json::from_str(doctor_json).map_err(|error| error.to_string())?;
+    let Some(object) = doctor.as_object_mut() else {
+        return Err("doctor report is not a JSON object".to_string());
+    };
+    for field in ["executable_path", "data_directory", "current_desktop"] {
+        if object.contains_key(field) {
+            object.insert(field.to_string(), Value::String("<redacted>".to_string()));
+        }
+    }
+    if object.contains_key("ipc_state") {
+        object.insert(
+            "ipc_state".to_string(),
+            Value::String("active: <redacted-pipe>".to_string()),
+        );
+    }
+    for field in ["snapshot_error"] {
+        if let Some(Value::String(value)) = object.get_mut(field) {
+            *value = redact_text(value, data_dir);
+        }
+    }
+    if let Some(Value::Array(errors)) = object.get_mut("recent_errors") {
+        for error in errors {
+            if let Value::String(value) = error {
+                *value = redact_text(value, data_dir);
+            }
+        }
+    }
+    if let Some(Value::Object(backend)) = object.get_mut("backend") {
+        if let Some(Value::String(value)) = backend.get_mut("error") {
+            *value = redact_text(value, data_dir);
+        }
+    }
+    serde_json::to_vec_pretty(&doctor).map_err(|error| error.to_string())
+}
+
+fn redact_text(text: &str, data_dir: &Path) -> String {
+    let mut output = text.to_string();
+    let mut replacements = vec![data_dir.to_string_lossy().to_string()];
+    for variable in ["USERPROFILE", "HOME", "HOMEDRIVE", "HOMEPATH"] {
+        if let Some(value) = std::env::var_os(variable) {
+            let value = value.to_string_lossy().to_string();
+            if !value.is_empty() {
+                replacements.push(value);
+            }
+        }
+    }
+    replacements.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    replacements.dedup();
+    for value in replacements {
+        if !value.is_empty() {
+            output = output.replace(&value, "<redacted-path>");
+        }
+    }
+    output
+}
+
 fn redact_rules(values: &mut Vec<String>) {
     if !values.is_empty() {
         let count = values.len();
@@ -121,7 +180,6 @@ fn redact_rules(values: &mut Vec<String>) {
     }
 }
 
-// Function purpose: Performs the checksum file operation required by this module.
 fn checksum_file(manifest: &Manifest) -> String {
     let mut output = String::new();
     for (name, entry) in &manifest.files {
@@ -130,7 +188,6 @@ fn checksum_file(manifest: &Manifest) -> String {
     output
 }
 
-// Function purpose: Performs the add bytes operation required by this module.
 fn add_bytes(
     zip: &mut zip::ZipWriter<File>,
     options: SimpleFileOptions,
@@ -149,7 +206,6 @@ fn add_bytes(
     Ok(())
 }
 
-// Function purpose: Writes bytes.
 fn write_bytes(
     zip: &mut zip::ZipWriter<File>,
     options: SimpleFileOptions,
@@ -164,7 +220,6 @@ fn write_bytes(
     zip.write_all(data).map_err(|error| error.to_string())
 }
 
-// Function purpose: Computes the lowercase SHA-256 digest of the supplied bytes without an external crypto dependency.
 fn sha256_hex(data: &[u8]) -> String {
     const INITIAL: [u32; 8] = [
         0x6a09_e667,
@@ -177,70 +232,17 @@ fn sha256_hex(data: &[u8]) -> String {
         0x5be0_cd19,
     ];
     const K: [u32; 64] = [
-        0x428a_2f98,
-        0x7137_4491,
-        0xb5c0_fbcf,
-        0xe9b5_dba5,
-        0x3956_c25b,
-        0x59f1_11f1,
-        0x923f_82a4,
-        0xab1c_5ed5,
-        0xd807_aa98,
-        0x1283_5b01,
-        0x2431_85be,
-        0x550c_7dc3,
-        0x72be_5d74,
-        0x80de_b1fe,
-        0x9bdc_06a7,
-        0xc19b_f174,
-        0xe49b_69c1,
-        0xefbe_4786,
-        0x0fc1_9dc6,
-        0x240c_a1cc,
-        0x2de9_2c6f,
-        0x4a74_84aa,
-        0x5cb0_a9dc,
-        0x76f9_88da,
-        0x983e_5152,
-        0xa831_c66d,
-        0xb003_27c8,
-        0xbf59_7fc7,
-        0xc6e0_0bf3,
-        0xd5a7_9147,
-        0x06ca_6351,
-        0x1429_2967,
-        0x27b7_0a85,
-        0x2e1b_2138,
-        0x4d2c_6dfc,
-        0x5338_0d13,
-        0x650a_7354,
-        0x766a_0abb,
-        0x81c2_c92e,
-        0x9272_2c85,
-        0xa2bf_e8a1,
-        0xa81a_664b,
-        0xc24b_8b70,
-        0xc76c_51a3,
-        0xd192_e819,
-        0xd699_0624,
-        0xf40e_3585,
-        0x106a_a070,
-        0x19a4_c116,
-        0x1e37_6c08,
-        0x2748_774c,
-        0x34b0_bcb5,
-        0x391c_0cb3,
-        0x4ed8_aa4a,
-        0x5b9c_ca4f,
-        0x682e_6ff3,
-        0x748f_82ee,
-        0x78a5_636f,
-        0x84c8_7814,
-        0x8cc7_0208,
-        0x90be_fffa,
-        0xa450_6ceb,
-        0xbef9_a3f7,
-        0xc671_78f2,
+        0x428a_2f98, 0x7137_4491, 0xb5c0_fbcf, 0xe9b5_dba5, 0x3956_c25b, 0x59f1_11f1,
+        0x923f_82a4, 0xab1c_5ed5, 0xd807_aa98, 0x1283_5b01, 0x2431_85be, 0x550c_7dc3,
+        0x72be_5d74, 0x80de_b1fe, 0x9bdc_06a7, 0xc19b_f174, 0xe49b_69c1, 0xefbe_4786,
+        0x0fc1_9dc6, 0x240c_a1cc, 0x2de9_2c6f, 0x4a74_84aa, 0x5cb0_a9dc, 0x76f9_88da,
+        0x983e_5152, 0xa831_c66d, 0xb003_27c8, 0xbf59_7fc7, 0xc6e0_0bf3, 0xd5a7_9147,
+        0x06ca_6351, 0x1429_2967, 0x27b7_0a85, 0x2e1b_2138, 0x4d2c_6dfc, 0x5338_0d13,
+        0x650a_7354, 0x766a_0abb, 0x81c2_c92e, 0x9272_2c85, 0xa2bf_e8a1, 0xa81a_664b,
+        0xc24b_8b70, 0xc76c_51a3, 0xd192_e819, 0xd699_0624, 0xf40e_3585, 0x106a_a070,
+        0x19a4_c116, 0x1e37_6c08, 0x2748_774c, 0x34b0_bcb5, 0x391c_0cb3, 0x4ed8_aa4a,
+        0x5b9c_ca4f, 0x682e_6ff3, 0x748f_82ee, 0x78a5_636f, 0x84c8_7814, 0x8cc7_0208,
+        0x90be_fffa, 0xa450_6ceb, 0xbef9_a3f7, 0xc671_78f2,
     ];
 
     let bit_len = (data.len() as u64).wrapping_mul(8);
@@ -310,17 +312,17 @@ fn sha256_hex(data: &[u8]) -> String {
     output
 }
 
-// Function purpose: Performs the safe timestamp operation required by this module.
 fn safe_timestamp() -> String {
     timestamp_utc().replace([':', '.'], "-")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{redacted_config_toml, sha256_hex};
+    use super::{redact_doctor_json, redacted_config_toml, sha256_hex};
     use crate::config::Config;
+    use serde_json::json;
+    use std::path::Path;
 
-    // Function purpose: Verifies the sha256 matches standard vectors scenario and its expected safety or state invariant.
     #[test]
     fn sha256_matches_standard_vectors() {
         assert_eq!(
@@ -333,7 +335,6 @@ mod tests {
         );
     }
 
-    // Function purpose: Verifies the configuration rules are redacted scenario and its expected safety or state invariant.
     #[test]
     fn configuration_rules_are_redacted() {
         let mut config = Config::default();
@@ -344,5 +345,24 @@ mod tests {
         assert!(!output.contains("PrivateWindow"));
         assert!(output.contains("<redacted:1 entry>"));
         assert!(output.contains("<redacted:2 entries>"));
+    }
+
+    #[test]
+    fn doctor_paths_and_desktop_ids_are_redacted() {
+        let source = json!({
+            "executable_path": "C:\\Users\\alice\\DeskPilot.exe",
+            "data_directory": "C:\\Users\\alice",
+            "current_desktop": "secret-guid",
+            "ipc_state": "active: pipe",
+            "recent_errors": ["failed at C:\\Users\\alice\\file"]
+        });
+        let output = redact_doctor_json(
+            &serde_json::to_string(&source).expect("serialize"),
+            Path::new("C:\\Users\\alice"),
+        )
+        .expect("redaction");
+        let text = String::from_utf8(output).expect("utf8");
+        assert!(!text.contains("secret-guid"));
+        assert!(!text.contains("C:\\\\Users\\\\alice"));
     }
 }
