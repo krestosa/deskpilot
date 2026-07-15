@@ -39,7 +39,9 @@ jobs:
         run: |
           if (-not $env:HEAD_BRANCH) { throw 'Bootstrap remediation must run from a pull request branch.' }
           git switch -C $env:HEAD_BRANCH
-          $payload = Get-Content -Raw -LiteralPath '.remediation\payload.b64'
+          $parts = Get-ChildItem -LiteralPath '.remediation' -Filter 'part-*' -File | Sort-Object Name
+          if ($parts.Count -eq 0) { throw 'Remediation payload is missing.' }
+          $payload = ($parts | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join ''
           [IO.File]::WriteAllBytes('.remediation\payload.zip', [Convert]::FromBase64String($payload.Trim()))
           Expand-Archive -LiteralPath '.remediation\payload.zip' -DestinationPath . -Force
           Remove-Item -Recurse -Force -LiteralPath '.remediation'
