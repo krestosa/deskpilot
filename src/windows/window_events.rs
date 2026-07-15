@@ -1,7 +1,7 @@
 // File purpose: Listens for native top-level window lifecycle events and reports stable window tokens for event-confirmed occupancy.
 use std::mem::zeroed;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 use std::sync::OnceLock;
 use std::thread::{self, JoinHandle};
 use windows_sys::Win32::Foundation::HWND;
@@ -15,7 +15,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 use crate::reconciliation::WindowToken;
 
-static EVENT_SENDER: OnceLock<Sender<WindowEvent>> = OnceLock::new();
+static EVENT_SENDER: OnceLock<SyncSender<WindowEvent>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowEvent {
@@ -24,12 +24,10 @@ pub struct WindowEvent {
 }
 
 impl WindowEvent {
-    // Function purpose: Returns the stable native token used to correlate this event with a later desktop inventory snapshot.
     pub fn token(self) -> WindowToken {
         self.token
     }
 
-    // Function purpose: Reports whether the event can represent a newly opened or newly shown user application window.
     pub fn occupancy_gain(self) -> bool {
         self.event == EVENT_OBJECT_CREATE || self.event == EVENT_OBJECT_SHOW
     }
@@ -41,8 +39,8 @@ pub struct WindowEventController {
 }
 
 impl WindowEventController {
-    // Function purpose: Starts the component and returns the controller used to update or stop it.
-    pub fn start(sender: Sender<WindowEvent>) -> Result<Self, String> {
+    // Function purpose: Installs the native hook and waits until registration succeeds before returning.
+    pub fn start(sender: SyncSender<WindowEvent>) -> Result<Self, String> {
         EVENT_SENDER
             .set(sender)
             .map_err(|_| "window event sender already initialized".to_string())?;
@@ -60,7 +58,6 @@ impl WindowEventController {
         })
     }
 
-    // Function purpose: Stops the component, signals its worker thread, and waits for native resources to be released.
     pub fn stop(&mut self) {
         let thread_id = self.thread_id.load(Ordering::Acquire);
         if thread_id != 0 {
@@ -73,14 +70,12 @@ impl WindowEventController {
 }
 
 impl Drop for WindowEventController {
-    // Function purpose: Releases the native or background resource owned by this value when it leaves scope.
     fn drop(&mut self) {
         self.stop();
     }
 }
 
-// Function purpose: Performs the run loop operation required by this module.
-fn run_loop(ready: Sender<Result<u32, String>>) -> Result<(), String> {
+fn run_loop(ready: std::sync::mpsc::Sender<Result<u32, String>>) -> Result<(), String> {
     unsafe {
         let hook = SetWinEventHook(
             EVENT_OBJECT_CREATE,
@@ -108,7 +103,7 @@ fn run_loop(ready: Sender<Result<u32, String>>) -> Result<(), String> {
     Ok(())
 }
 
-// Function purpose: Filters native top-level window lifecycle callbacks and forwards the event plus a stable window token to the main loop.
+// Function purpose: Performs only constant-time filtering and a non-blocking bounded enqueue inside the global callback.
 unsafe extern "system" fn window_event_proc(
     _hook: HWINEVENTHOOK,
     event: u32,
@@ -120,7 +115,7 @@ unsafe extern "system" fn window_event_proc(
 ) {
     if hwnd != 0 && object_id == OBJID_WINDOW && child_id == CHILDID_SELF as i32 {
         if let Some(sender) = EVENT_SENDER.get() {
-            let _ = sender.send(WindowEvent {
+            let _ = sender.try_send(WindowEvent {
                 token: hwnd as usize as WindowToken,
                 event,
             });
@@ -135,7 +130,6 @@ mod tests {
         EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE, EVENT_OBJECT_SHOW,
     };
 
-    // Function purpose: Verifies only create and show events can authorize consumption of the protected spare.
     #[test]
     fn occupancy_gain_requires_create_or_show() {
         assert!(WindowEvent {
