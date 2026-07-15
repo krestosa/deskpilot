@@ -64,7 +64,7 @@ pub fn detailed_snapshot(
                 .ignore_classes
                 .iter()
                 .any(|value| value.eq_ignore_ascii_case(&identity.class_name))
-            || !is_eligible_application_window(hwnd)
+            || !is_eligible_application_window(hwnd, &identity.class_name)
         {
             continue;
         }
@@ -87,7 +87,7 @@ pub fn detailed_snapshot(
 
         if let Some(desktop) = locate_window_desktop(backend, &desktops, &current.id, hwnd) {
             occupancy.insert(desktop.clone(), Occupancy::Occupied);
-            if window_is_confirmable_user_surface(hwnd) {
+            if window_is_confirmable_user_surface(hwnd, &identity.class_name) {
                 windows
                     .entry(desktop)
                     .or_default()
@@ -225,8 +225,8 @@ fn inspect_identity(hwnd: HWND) -> Option<BasicWindow> {
     }
 }
 
-// Function purpose: Returns whether eligible application window.
-fn is_eligible_application_window(hwnd: HWND) -> bool {
+// Function purpose: Returns whether an ownerless application window is eligible for inventory, including inactive File Explorer windows that Windows sometimes hides without a virtual-desktop cloak flag.
+fn is_eligible_application_window(hwnd: HWND, class_name: &str) -> bool {
     unsafe {
         if GetWindow(hwnd, GW_OWNER) != 0 {
             return false;
@@ -235,7 +235,11 @@ fn is_eligible_application_window(hwnd: HWND) -> bool {
         if ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) != 0 {
             return false;
         }
-        IsWindowVisible(hwnd) != 0 || window_is_shell_cloaked(hwnd)
+        inventory_visibility_allows(
+            IsWindowVisible(hwnd) != 0,
+            window_cloak_flags(hwnd),
+            class_name,
+        )
     }
 }
 
@@ -278,11 +282,18 @@ fn window_is_shell_cloaked(hwnd: HWND) -> bool {
     window_cloak_flags(hwnd) & 0x2 != 0
 }
 
-// Function purpose: Accepts a visible current-desktop window or a virtual-desktop-cloaked inactive window as persistent user-surface evidence.
-fn window_is_confirmable_user_surface(hwnd: HWND) -> bool {
-    let visible = unsafe { IsWindowVisible(hwnd) != 0 };
-    let cloak_flags = window_cloak_flags(hwnd);
-    (visible && cloak_flags == 0) || cloak_flags & 0x2 != 0
+// Function purpose: Accepts a visible current-desktop window, a virtual-desktop-cloaked inactive window, or a recognized inactive File Explorer top-level window as persistent user-surface evidence.
+fn window_is_confirmable_user_surface(hwnd: HWND, class_name: &str) -> bool {
+    inventory_visibility_allows(
+        unsafe { IsWindowVisible(hwnd) != 0 },
+        window_cloak_flags(hwnd),
+        class_name,
+    )
+}
+
+// Function purpose: Centralizes visibility rules so real File Explorer windows remain countable when Windows reports them hidden without the expected shell-cloak bit.
+fn inventory_visibility_allows(visible: bool, cloak_flags: u32, class_name: &str) -> bool {
+    (visible && cloak_flags == 0) || cloak_flags & 0x2 != 0 || is_file_explorer_class(class_name)
 }
 
 // Function purpose: Performs the executable name operation required by this module.
@@ -384,7 +395,10 @@ fn ignored_class(class_name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ignored_class, ignored_process_window, ignored_shell_executable, rect_covers};
+    use super::{
+        ignored_class, ignored_process_window, ignored_shell_executable,
+        inventory_visibility_allows, rect_covers,
+    };
     use windows_sys::Win32::Foundation::RECT;
 
     // Function purpose: Verifies the shell surfaces are not user applications scenario and its expected safety or state invariant.
@@ -402,6 +416,16 @@ mod tests {
         assert!(ignored_process_window("explorer.exe", "Shell_TrayWnd"));
         assert!(!ignored_process_window("explorer.exe", "CabinetWClass"));
         assert!(!ignored_process_window("EXPLORER.EXE", "ExploreWClass"));
+    }
+
+    // Function purpose: Verifies hidden inactive File Explorer windows remain inventory evidence while unrelated hidden windows do not.
+    #[test]
+    fn hidden_file_explorer_remains_countable() {
+        assert!(inventory_visibility_allows(false, 0, "CabinetWClass"));
+        assert!(inventory_visibility_allows(false, 0, "ExploreWClass"));
+        assert!(!inventory_visibility_allows(false, 0, "Notepad"));
+        assert!(inventory_visibility_allows(false, 0x2, "Notepad"));
+        assert!(inventory_visibility_allows(true, 0, "Notepad"));
     }
 
     // Function purpose: Verifies the fullscreen requires monitor coverage scenario and its expected safety or state invariant.
