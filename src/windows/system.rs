@@ -106,7 +106,7 @@ fn read_ubr() -> Option<u32> {
         let result = RegQueryValueExW(
             key,
             value_name.as_ptr(),
-            0,
+            std::ptr::null(),
             &mut value_type,
             (&mut value as *mut u32).cast::<u8>(),
             &mut size,
