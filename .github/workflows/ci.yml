@@ -1,14 +1,16 @@
-# File purpose: Builds, tests, validates, packages, and archives DeskPilot on a hosted Windows runner.
+# File purpose: Builds, audits, tests, validates, packages, and attests DeskPilot on a hosted Windows runner.
 name: CI
 
 on:
   pull_request:
   push:
     branches:
-      - feature/portable-dynamic-desktop-manager
+      - main
 
 permissions:
   contents: read
+  id-token: write
+  attestations: write
 
 concurrency:
   group: deskpilot-ci-${{ github.workflow }}-${{ github.ref }}
@@ -23,19 +25,20 @@ jobs:
   validate:
     name: Windows build and package
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout exact source SHA
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
-      - name: Install stable Rust MSVC
+      - name: Install pinned Rust MSVC
         shell: pwsh
         run: |
-          rustup toolchain install 1.85.0 --profile minimal
-          rustup default 1.85.0
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
           rustup target add $env:TARGET
           rustup component add rustfmt clippy
           rustc --version --verbose
@@ -47,12 +50,22 @@ jobs:
           if (-not (Test-Path Cargo.lock -PathType Leaf)) { throw 'Cargo.lock is not committed.' }
           cargo metadata --locked --no-deps --format-version 1 | Out-Null
 
-      - name: Check formatting
+      - name: Install pinned cargo-audit
+        shell: pwsh
+        run: cargo install cargo-audit --version 0.22.1 --locked
+
+      - name: Audit Rust dependencies
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force artifacts | Out-Null
-          cargo fmt --all -- --check 2>&1 |
-            Tee-Object -FilePath artifacts\format.log
+          cargo audit --json --file Cargo.lock 2>&1 |
+            Tee-Object -FilePath artifacts\audit.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check Rust formatting
+        shell: pwsh
+        run: |
+          cargo fmt --all -- --check 2>&1 | Tee-Object -FilePath artifacts\format.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Clippy
@@ -92,7 +105,6 @@ jobs:
         shell: pwsh
         run: |
           $exe = (Resolve-Path '.\target\x86_64-pc-windows-msvc\release\DeskPilot.exe').Path
-          # Function purpose: Runs one DeskPilot command with redirected output and returns its exit code, stdout, and stderr for assertions.
           function Invoke-DeskPilotProcess {
             param([string]$Name, [string[]]$Arguments)
             $start = [System.Diagnostics.ProcessStartInfo]::new()
@@ -122,6 +134,11 @@ jobs:
           if ($version.ExitCode -ne 0) { throw "Version command failed: $($version.Stderr)" }
           if ($version.Stdout -ne 'DeskPilot 0.1.8') { throw "Unexpected version output: [$($version.Stdout)]" }
 
+          $help = Invoke-DeskPilotProcess -Name 'help' -Arguments @('--help')
+          if ($help.ExitCode -ne 0) { throw "Help command failed: $($help.Stderr)" }
+          if (-not $help.Stdout.StartsWith('DeskPilot')) { throw "Unexpected help output: [$($help.Stdout)]" }
+          if ($help.Stdout -match 'DeskPilot 0\.1\.0') { throw 'Help output contains a stale literal version.' }
+
           $config = Invoke-DeskPilotProcess -Name 'config-validate' -Arguments @('config', 'validate', '.\deskpilot.example.toml')
           if ($config.ExitCode -ne 0) { throw "Config validation failed: $($config.Stderr)" }
           if (-not $config.Stdout.StartsWith('valid:')) { throw "Unexpected config validation output: [$($config.Stdout)]" }
@@ -129,7 +146,9 @@ jobs:
           $selfTestResult = Invoke-DeskPilotProcess -Name 'self-test' -Arguments @('self-test', '--backend', 'mock', '--json')
           if ($selfTestResult.ExitCode -ne 0) { throw "Mock self-test failed: $($selfTestResult.Stderr)" }
           $selfTest = $selfTestResult.Stdout | ConvertFrom-Json
-          if (-not $selfTest.passed -or $selfTest.backend -ne 'mock') { throw 'Mock backend self-test returned an invalid result.' }
+          if (-not $selfTest.passed -or $selfTest.backend -ne 'mock' -or $selfTest.cases -lt 6) {
+            throw 'Mock backend self-test returned an invalid result.'
+          }
 
       - name: Verify exact license
         shell: pwsh
@@ -184,7 +203,7 @@ jobs:
 
       - name: Upload portable artifact and diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: DeskPilot-portable-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
@@ -193,3 +212,9 @@ jobs:
             artifacts/*
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Attest portable package provenance
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
+        with:
+          subject-path: dist/*.zip

@@ -18,7 +18,7 @@
 
 ## Hosted Windows CI
 
-`.github/workflows/ci.yml` runs formatting, Clippy with warnings denied, tests, locked release build, local CLI checks, exact license verification and portable ZIP construction on `windows-latest`. It uploads the package, checksums, logs and bootstrap lockfile for the exact commit SHA.
+`.github/workflows/ci.yml` runs the locked dependency audit, formatting, Clippy with warnings denied, tests, locked release build, local CLI checks, exact license verification, portable ZIP construction and package checksum verification on `windows-latest`. It uploads the portable ZIP, package report and diagnostics for the exact commit SHA.
 
 A hosted runner build proves compilation and deterministic behavior. It does not prove low-level input or Explorer-integrated virtual desktop behavior because hosted Actions sessions are not guaranteed to be interactive.
 
@@ -49,7 +49,6 @@ On a supported Windows 11 machine:
 9. Empty an internal desktop and verify it is removed only after the grace period without moving or closing windows.
 10. Restart Explorer and verify navigation/reconciliation recover.
 11. Run `DeskPilot.exe shutdown` and confirm hooks, icon and process exit.
-
 
 ## Virtual delayed-topology simulation
 

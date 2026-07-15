@@ -19,8 +19,9 @@ use crate::windows::{
 };
 use crate::{APP_NAME, APP_VERSION};
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, RwLock};
@@ -34,6 +35,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use crate::cli::RunOptions;
 use crate::windows::util::wide;
 
+const WINDOW_EVENT_QUEUE: usize = 256;
+const WINDOW_CANDIDATE_TTL: Duration = Duration::from_secs(5);
+
 #[derive(Debug)]
 enum AppSignal {
     Navigation(Step),
@@ -43,7 +47,6 @@ enum AppSignal {
     WindowEvent(WindowEvent),
 }
 
-// Function purpose: Starts the module runtime, owns its event loop, and releases all native resources during orderly shutdown.
 pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
     fs::create_dir_all(&data_dir).map_err(|error| {
         format!(
@@ -54,7 +57,7 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
     install_panic_hook(&data_dir);
     let instance = InstanceGuard::acquire()?;
     if instance.already_exists {
-        return Err("DeskPilot is already running for this user".to_string());
+        return Err("DeskPilot is already running for this Windows session".to_string());
     }
 
     let (config, config_path) =
@@ -116,7 +119,7 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
     };
     bridge(desktop_rx, signal_tx.clone(), |_| AppSignal::DesktopEvent);
 
-    let (window_tx, window_rx) = mpsc::channel();
+    let (window_tx, window_rx) = mpsc::sync_channel(WINDOW_EVENT_QUEUE);
     bridge(window_rx, signal_tx.clone(), AppSignal::WindowEvent);
     let mut window_events = match WindowEventController::start(window_tx) {
         Ok(controller) => Some(controller),
@@ -175,11 +178,11 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
                     Instant::now() + Duration::from_millis(delay),
                 );
             }
-            Ok(AppSignal::Tray(command)) => {
-                if state.handle_tray(command, tray.as_ref())? {
-                    pending_reconcile = Some(Instant::now());
-                }
-            }
+            Ok(AppSignal::Tray(command)) => match state.handle_tray(command, tray.as_ref()) {
+                Ok(true) => pending_reconcile = Some(Instant::now()),
+                Ok(false) => {}
+                Err(error) => state.error(format!("tray command failed: {error}")),
+            },
             Ok(AppSignal::Ipc(request)) => {
                 let reconcile = state.handle_ipc(request);
                 if reconcile {
@@ -207,12 +210,18 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
 
         let config_snapshot = state.config_read();
         if let Some(hook) = &hook {
-            hook.set_enabled(config_snapshot.enabled);
-            hook.set_backend_ready(state.backend.compatible());
-            hook.set_suspended(
-                config_snapshot.windows.suspend_in_exclusive_fullscreen
-                    && inventory::exclusive_fullscreen_active(),
-            );
+            if hook.is_running() {
+                hook.set_enabled(config_snapshot.enabled);
+                hook.set_backend_ready(state.backend.compatible());
+                hook.set_wheel_config(&config_snapshot.wheel);
+                hook.set_suspended(
+                    config_snapshot.windows.suspend_in_exclusive_fullscreen
+                        && inventory::exclusive_fullscreen_active(),
+                );
+            } else if state.hook_state == "active" {
+                state.hook_state = "failed: hook thread exited".to_string();
+                state.error("input hook thread exited unexpectedly".to_string());
+            }
         }
 
         let now = Instant::now();
@@ -254,7 +263,6 @@ pub fn run(data_dir: PathBuf, options: RunOptions) -> Result<(), String> {
     Ok(())
 }
 
-// Function purpose: Keeps the earliest pending reconciliation deadline so later events cannot postpone required work.
 fn schedule_reconcile_at_earliest(pending: &mut Option<Instant>, deadline: Instant) {
     match pending {
         Some(current) if *current <= deadline => {}
@@ -289,7 +297,6 @@ struct AppReconcileBackend<'a> {
 }
 
 impl ReconcileBackend for AppReconcileBackend<'_> {
-    // Function purpose: Builds the current desktop snapshot and applies the configured empty-desktop grace period.
     fn snapshot(&mut self) -> Result<Vec<crate::reconciliation::DesktopState>, String> {
         let detailed = inventory::detailed_snapshot(self.backend, self.config, &HashMap::new())?;
         let mut states = detailed.states;
@@ -311,46 +318,58 @@ impl ReconcileBackend for AppReconcileBackend<'_> {
         Ok(states)
     }
 
-    // Function purpose: Creates exactly one desktop and returns its stable backend identifier for later observation.
     fn create_desktop(&mut self) -> Result<DesktopId, String> {
         self.backend.create().map(|desktop| desktop.id)
     }
 
-    // Function purpose: Switches only when an explicit reconciliation mutation requests a desktop change.
     fn switch_desktop(&mut self, desktop: &DesktopId) -> Result<(), String> {
         self.backend.switch_to_id(desktop)
     }
 
-    // Function purpose: Removes exactly one confirmed-empty desktop into the supplied safe fallback.
     fn remove_desktop(&mut self, desktop: &DesktopId, fallback: &DesktopId) -> Result<(), String> {
         self.backend.remove(desktop, fallback)
     }
 }
 
 impl AppState {
-    // Function purpose: Returns a consistent configuration snapshot and falls back to safe defaults if the shared lock is poisoned.
     fn config_read(&self) -> Config {
         self.config
             .read()
             .map_or_else(|_| Config::default(), |config| config.clone())
     }
 
-    // Function purpose: Records only create or show events as short-lived evidence that a real eligible window may have consumed the protected spare.
     fn note_window_event(&mut self, event: WindowEvent) {
         if event.occupancy_gain() {
             self.window_candidates.insert(event.token(), Instant::now());
         }
     }
 
-    // Function purpose: Expires stale native window tokens so unrelated historical events cannot consume a future spare.
+    fn current_window_candidates(&self) -> HashSet<WindowToken> {
+        let now = Instant::now();
+        self.window_candidates
+            .iter()
+            .filter_map(|(token, seen)| {
+                (now.duration_since(*seen) <= WINDOW_CANDIDATE_TTL).then_some(*token)
+            })
+            .collect()
+    }
+
     fn prune_window_candidates(&mut self) {
         let now = Instant::now();
         self.window_candidates
-            .retain(|_, seen| now.duration_since(*seen) <= Duration::from_secs(5));
+            .retain(|_, seen| now.duration_since(*seen) <= WINDOW_CANDIDATE_TTL);
     }
 
-    // Function purpose: Persists config.
+    // Function purpose: Refuses to overwrite external edits that appeared after the active configuration was loaded.
     fn save_config(&self, config: &Config) -> Result<(), String> {
+        let expected = self.config_read();
+        let disk = Config::load(&self.config_path).map_err(|error| error.to_string())?;
+        if disk != expected {
+            return Err(
+                "configuration changed externally; reload before applying tray or IPC changes"
+                    .to_string(),
+            );
+        }
         config
             .write_atomic(&self.config_path)
             .map_err(|error| error.to_string())?;
@@ -362,7 +381,6 @@ impl AppState {
         Ok(())
     }
 
-    // Function purpose: Switches to the relative desktop selected by the normalized wheel step and configured navigation mode.
     fn navigate(&mut self, step: Step) {
         let config = self.config_read();
         if !config.enabled {
@@ -387,7 +405,6 @@ impl AppState {
         }
     }
 
-    // Function purpose: Applies one race-proof reconciliation mutation and reports whether a short follow-up pass is required.
     fn reconcile(&mut self) -> ReconcilePass {
         if !self.backend.compatible() {
             return ReconcilePass::Blocked;
@@ -424,22 +441,22 @@ impl AppState {
         }
     }
 
-    // Function purpose: Builds the same grace-aware snapshot used by reconciliation for diagnostics without applying a mutation.
-    fn snapshot(&mut self) -> Result<Vec<crate::reconciliation::DesktopState>, String> {
-        self.prune_window_candidates();
-        let window_candidates: HashSet<_> = self.window_candidates.keys().copied().collect();
+    // Function purpose: Builds diagnostics against cloned reconciliation state so observation cannot advance grace or spare confirmation.
+    fn diagnostic_snapshot(&self) -> Result<Vec<crate::reconciliation::DesktopState>, String> {
         let config = self.config_read();
+        let mut empty_since = self.empty_since.clone();
+        let mut spare_guard = self.spare_guard.clone();
+        let window_candidates = self.current_window_candidates();
         let mut backend = AppReconcileBackend {
             backend: &self.backend,
             config: &config,
-            empty_since: &mut self.empty_since,
-            spare_guard: &mut self.spare_guard,
+            empty_since: &mut empty_since,
+            spare_guard: &mut spare_guard,
             window_candidates: &window_candidates,
         };
         backend.snapshot()
     }
 
-    // Function purpose: Handles tray.
     fn handle_tray(&mut self, command: TrayCommand, tray: Option<&Tray>) -> Result<bool, String> {
         let mut config = self.config_read();
         let mut reconcile = false;
@@ -476,10 +493,9 @@ impl AppState {
             TrayCommand::Diagnostics => {
                 let report = self.doctor();
                 let path = self.data_dir.join("logs").join("doctor.json");
-                if let Ok(json) = serde_json::to_vec_pretty(&report) {
-                    let _ = fs::write(&path, json);
-                    open_path(&path);
-                }
+                let json = serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?;
+                fs::write(&path, json).map_err(|error| error.to_string())?;
+                open_path(&path);
             }
             TrayCommand::ToggleStartup => {
                 if startup::is_enabled() {
@@ -498,7 +514,6 @@ impl AppState {
         Ok(reconcile)
     }
 
-    // Function purpose: Handles ipc.
     fn handle_ipc(&mut self, request: ServerRequest) -> bool {
         let command = request.request.command.clone();
         let mut reconcile = false;
@@ -571,24 +586,26 @@ impl AppState {
                 |_| IpcResponse::message("configuration valid"),
             ),
             "logs path" => IpcResponse::success(json!({"path": self.data_dir.join("logs")})),
-            "logs tail" => IpcResponse::success(
-                json!({"lines": tail_log(&self.data_dir.join("logs").join("deskpilot.log"), 100)}),
-            ),
+            "logs tail" => tail_log(&self.data_dir.join("logs").join("deskpilot.log"), 100)
+                .map_or_else(
+                    |error| IpcResponse::failure(74, error),
+                    |lines| IpcResponse::success(json!({"lines": lines})),
+                ),
             "support-bundle" => {
                 let doctor = serde_json::to_string_pretty(&self.doctor()).unwrap_or_default();
-                let redacted = toml::to_string_pretty(&self.config_read()).unwrap_or_default();
-                create_support_bundle(&self.data_dir, &doctor, &redacted).map_or_else(
+                let config_toml = toml::to_string_pretty(&self.config_read()).unwrap_or_default();
+                create_support_bundle(&self.data_dir, &doctor, &config_toml).map_or_else(
                     |error| IpcResponse::failure(74, error),
                     |path| IpcResponse::success(json!({"path": path})),
                 )
             }
-            "startup enable" => {
-                startup::enable(&std::env::current_exe().unwrap_or_default(), &self.data_dir)
-                    .map_or_else(
-                        |error| IpcResponse::failure(74, error),
-                        |()| IpcResponse::message("startup enabled"),
-                    )
-            }
+            "startup enable" => std::env::current_exe()
+                .map_err(|error| error.to_string())
+                .and_then(|executable| startup::enable(&executable, &self.data_dir))
+                .map_or_else(
+                    |error| IpcResponse::failure(74, error),
+                    |()| IpcResponse::message("startup enabled"),
+                ),
             "startup disable" => startup::disable().map_or_else(
                 |error| IpcResponse::failure(74, error),
                 |()| IpcResponse::message("startup disabled"),
@@ -604,19 +621,23 @@ impl AppState {
         reconcile
     }
 
-    // Function purpose: Performs the reload operation required by this module.
     fn reload(&mut self) -> Result<(), String> {
         let config = Config::load(&self.config_path).map_err(|error| error.to_string())?;
+        if let Some(logger) = Logger::global() {
+            logger
+                .reconfigure(config.logging.clone())
+                .map_err(|error| error.to_string())?;
+        }
         let mut target = self
             .config
             .write()
             .map_err(|_| "configuration lock poisoned".to_string())?;
         *target = config;
+        drop(target);
         self.publish("configuration-reloaded", "configuration reloaded");
         Ok(())
     }
 
-    // Function purpose: Performs the status operation required by this module.
     fn status(&self) -> serde_json::Value {
         let config = self.config_read();
         json!({
@@ -631,12 +652,13 @@ impl AppState {
         })
     }
 
-    // Function purpose: Builds the structured diagnostic report without exposing window titles or document contents.
-    fn doctor(&mut self) -> DoctorReport {
+    fn doctor(&self) -> DoctorReport {
         let config = self.config_read();
         let version = self.backend.version();
         let capabilities = self.backend.capabilities();
-        let snapshot = self.snapshot().ok();
+        let snapshot_result = self.diagnostic_snapshot();
+        let snapshot_error = snapshot_result.as_ref().err().cloned();
+        let snapshot = snapshot_result.ok();
         let occupancy = snapshot.as_ref().map_or(
             OccupancyDiagnostic {
                 occupied: 0,
@@ -700,6 +722,7 @@ impl AppState {
             desktop_count: snapshot.as_ref().map(Vec::len),
             current_desktop: current.map(|desktop| desktop.id.0),
             occupancy,
+            snapshot_error,
             hook_state: self.hook_state.clone(),
             ipc_state: self.ipc_state.clone(),
             dynamic_reconciliation: if config.desktops.dynamic && !self.dynamic_forced_off {
@@ -714,22 +737,22 @@ impl AppState {
         }
     }
 
-    // Function purpose: Updates tray.
     fn update_tray(&self, tray: Option<&Tray>) {
         if let Some(tray) = tray {
             let config = self.config_read();
-            tray.state().update(
-                config.enabled,
-                config.desktops.dynamic && !self.dynamic_forced_off,
-                config.wheel.direction,
-                config.wheel.navigation,
-                startup::is_enabled(),
-                !self.backend.compatible(),
-            );
+            let backend_ready = self.backend.compatible();
+            tray.state().update(crate::tray::TrayStatus {
+                enabled: config.enabled,
+                dynamic: config.desktops.dynamic && !self.dynamic_forced_off,
+                direction: config.wheel.direction,
+                navigation: config.wheel.navigation,
+                startup: startup::is_enabled(),
+                backend_ready,
+                error: !backend_ready || self.hook_state.starts_with("failed"),
+            });
         }
     }
 
-    // Function purpose: Performs the publish operation required by this module.
     fn publish(&self, kind: &str, message: impl Into<String>) {
         let message = message.into();
         log(LogLevel::Info, &message);
@@ -739,7 +762,6 @@ impl AppState {
         self.events.publish(Event::new(kind, message));
     }
 
-    // Function purpose: Performs the error operation required by this module.
     fn error(&self, message: String) {
         log(LogLevel::Error, &message);
         if self.foreground {
@@ -749,7 +771,6 @@ impl AppState {
     }
 }
 
-// Function purpose: Performs the bridge operation required by this module.
 fn bridge<T, F>(receiver: Receiver<T>, sender: mpsc::Sender<AppSignal>, map: F)
 where
     T: Send + 'static,
@@ -764,7 +785,6 @@ where
     });
 }
 
-// Function purpose: Opens path.
 fn open_path(path: &Path) {
     let operation = wide("open");
     let target = wide(path);
@@ -780,23 +800,20 @@ fn open_path(path: &Path) {
     }
 }
 
-// Function purpose: Performs the tail log operation required by this module.
-fn tail_log(path: &Path, lines: usize) -> Vec<String> {
-    fs::read_to_string(path)
-        .map(|text| {
-            text.lines()
-                .rev()
-                .take(lines)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+// Function purpose: Scans a log with bounded memory and returns an explicit error instead of silently presenting an empty state.
+fn tail_log(path: &Path, lines: usize) -> Result<Vec<String>, String> {
+    let file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut tail = VecDeque::with_capacity(lines);
+    for line in BufReader::new(file).lines() {
+        let line = line.map_err(|error| error.to_string())?;
+        if tail.len() == lines {
+            tail.pop_front();
+        }
+        tail.push_back(line);
+    }
+    Ok(tail.into_iter().collect())
 }
 
-// Function purpose: Installs panic hook.
 fn install_panic_hook(data_dir: &Path) {
     let crash_dir = data_dir.join("crash-reports");
     let _ = fs::create_dir_all(&crash_dir);
@@ -805,7 +822,7 @@ fn install_panic_hook(data_dir: &Path) {
             "crash-{}.txt",
             timestamp_utc().replace([':', '.'], "-")
         ));
-        let message = format!("DeskPilot {}\n{}\n", APP_VERSION, info);
+        let message = format!("DeskPilot {APP_VERSION}\n{info}\n");
         let _ = fs::write(
             path,
             message
@@ -822,10 +839,10 @@ struct InstanceGuard {
 }
 
 impl InstanceGuard {
-    // Function purpose: Performs the acquire operation required by this module.
     fn acquire() -> Result<Self, String> {
         let sid = system::current_user_sid()?;
-        let name = wide(format!("Local\\DeskPilot-{sid}"));
+        let session = system::current_session_id()?;
+        let name = wide(format!("Local\\DeskPilot-{sid}-session-{session}"));
         unsafe {
             let handle = CreateMutexW(std::ptr::null(), 0, name.as_ptr());
             if handle == 0 {
@@ -840,7 +857,6 @@ impl InstanceGuard {
 }
 
 impl Drop for InstanceGuard {
-    // Function purpose: Releases the native or background resource owned by this value when it leaves scope.
     fn drop(&mut self) {
         unsafe {
             CloseHandle(self.handle);
@@ -853,7 +869,6 @@ mod scheduling_tests {
     use super::schedule_reconcile_at_earliest;
     use std::time::{Duration, Instant};
 
-    // Function purpose: Verifies the repeated window events cannot postpone reconciliation scenario and its expected safety or state invariant.
     #[test]
     fn repeated_window_events_cannot_postpone_reconciliation() {
         let now = Instant::now();
@@ -863,7 +878,6 @@ mod scheduling_tests {
         assert_eq!(pending, Some(first));
     }
 
-    // Function purpose: Verifies the watchdog advances a later pending reconciliation scenario and its expected safety or state invariant.
     #[test]
     fn watchdog_advances_a_later_pending_reconciliation() {
         let now = Instant::now();

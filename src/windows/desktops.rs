@@ -8,7 +8,7 @@ use windows_sys::Win32::Foundation::HWND;
 
 use super::system::{windows_version, WindowsVersion};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopInfo {
     pub id: DesktopId,
     pub index: usize,
@@ -25,6 +25,12 @@ pub struct BackendCapabilities {
 }
 
 #[derive(Debug, Clone)]
+pub struct DesktopTopology {
+    pub desktops: Vec<DesktopInfo>,
+    pub current: DesktopInfo,
+}
+
+#[derive(Debug, Clone)]
 pub struct WinvdBackend {
     version: WindowsVersion,
     compatible: bool,
@@ -32,7 +38,7 @@ pub struct WinvdBackend {
 }
 
 impl WinvdBackend {
-    // Function purpose: Performs the detect operation required by this module.
+    // Function purpose: Detects whether the current Windows shell family is explicitly supported.
     pub fn detect() -> Self {
         let version = windows_version();
         let compatible = is_supported_version(version);
@@ -54,22 +60,18 @@ impl WinvdBackend {
         }
     }
 
-    // Function purpose: Performs the version operation required by this module.
     pub fn version(&self) -> WindowsVersion {
         self.version
     }
 
-    // Function purpose: Performs the compatible operation required by this module.
     pub fn compatible(&self) -> bool {
         self.compatible
     }
 
-    // Function purpose: Performs the compatibility reason operation required by this module.
     pub fn compatibility_reason(&self) -> &str {
         &self.compatibility_reason
     }
 
-    // Function purpose: Performs the capabilities operation required by this module.
     pub fn capabilities(&self) -> BackendCapabilities {
         BackendCapabilities {
             enumerate: self.compatible,
@@ -81,7 +83,7 @@ impl WinvdBackend {
         }
     }
 
-    // Function purpose: Performs the list operation required by this module.
+    // Function purpose: Returns one ordered desktop enumeration.
     pub fn list(&self) -> Result<Vec<DesktopInfo>, String> {
         self.require_compatible()?;
         let desktops = winvd::get_desktops().map_err(format_error)?;
@@ -100,7 +102,7 @@ impl WinvdBackend {
             .collect()
     }
 
-    // Function purpose: Performs the current operation required by this module.
+    // Function purpose: Returns the current desktop identity and index.
     pub fn current(&self) -> Result<DesktopInfo, String> {
         self.require_compatible()?;
         let desktop = winvd::get_current_desktop().map_err(format_error)?;
@@ -112,26 +114,50 @@ impl WinvdBackend {
         })
     }
 
-    // Function purpose: Switches to id.
+    // Function purpose: Captures one ordered topology and verifies that the current desktop belongs to it.
+    pub fn topology(&self) -> Result<DesktopTopology, String> {
+        let desktops = self.list()?;
+        let current = self.current()?;
+        let Some(current_in_list) = desktops
+            .iter()
+            .find(|desktop| desktop.id == current.id)
+            .cloned()
+        else {
+            return Err("desktop topology changed while current desktop was resolved".to_string());
+        };
+        Ok(DesktopTopology {
+            desktops,
+            current: current_in_list,
+        })
+    }
+
+    // Function purpose: Verifies that an earlier ordered snapshot still matches the Windows shell topology.
+    pub fn topology_matches(&self, expected: &[DesktopInfo]) -> Result<bool, String> {
+        let current = self.list()?;
+        Ok(same_topology(expected, &current))
+    }
+
+    // Function purpose: Switches to a desktop by stable identifier after resolving its current index.
     pub fn switch_to_id(&self, desktop: &DesktopId) -> Result<(), String> {
-        let target = self.find(desktop)?;
+        let desktops = self.list()?;
+        let target = self.find_in(&desktops, desktop)?;
         winvd::switch_desktop(target.index as u32).map_err(format_error)
     }
 
-    // Function purpose: Switches relative.
+    // Function purpose: Switches relative to one current topology while targeting the selected stable desktop ID.
     pub fn switch_relative(&self, step: Step, mode: NavigationMode) -> Result<DesktopInfo, String> {
-        let desktops = self.list()?;
-        let current = self.current()?;
-        let target = target_index(current.index, desktops.len(), step, mode)
+        let topology = self.topology()?;
+        let target = target_index(topology.current.index, topology.desktops.len(), step, mode)
             .ok_or_else(|| "navigation reached a clamped edge".to_string())?;
-        winvd::switch_desktop(target as u32).map_err(format_error)?;
-        desktops
+        let target = topology
+            .desktops
             .get(target)
             .cloned()
-            .ok_or_else(|| "target desktop disappeared".to_string())
+            .ok_or_else(|| "target desktop disappeared".to_string())?;
+        self.switch_to_id(&target.id)?;
+        Ok(target)
     }
 
-    // Function purpose: Performs the create operation required by this module.
     pub fn create(&self) -> Result<DesktopInfo, String> {
         self.require_compatible()?;
         let desktop = winvd::create_desktop().map_err(format_error)?;
@@ -143,15 +169,22 @@ impl WinvdBackend {
         })
     }
 
-    // Function purpose: Performs the remove operation required by this module.
+    // Function purpose: Removes one stable desktop only after a second enumeration proves the topology did not change.
     pub fn remove(&self, desktop: &DesktopId, fallback: &DesktopId) -> Result<(), String> {
         self.require_compatible()?;
-        let desktop = self.find(desktop)?;
-        let fallback = self.find(fallback)?;
+        if desktop == fallback {
+            return Err("desktop and fallback must be different".to_string());
+        }
+        let first = self.list()?;
+        let second = self.list()?;
+        if !same_topology(&first, &second) {
+            return Err("desktop topology changed before removal; retrying from a fresh snapshot is required".to_string());
+        }
+        let desktop = self.find_in(&second, desktop)?;
+        let fallback = self.find_in(&second, fallback)?;
         winvd::remove_desktop(desktop.index as u32, fallback.index as u32).map_err(format_error)
     }
 
-    // Function purpose: Performs the desktop for window operation required by this module.
     pub fn desktop_for_window(&self, hwnd: HWND) -> Result<DesktopId, String> {
         self.require_compatible()?;
         let desktop = winvd::get_desktop_by_window(to_win_hwnd(hwnd)).map_err(format_error)?;
@@ -159,34 +192,39 @@ impl WinvdBackend {
         Ok(DesktopId(format!("{id:?}")))
     }
 
-    // Function purpose: Returns whether window on desktop.
-    pub fn is_window_on_desktop(&self, hwnd: HWND, desktop: &DesktopId) -> Result<bool, String> {
+    // Function purpose: Tests membership using an index from a caller-owned stable topology snapshot.
+    pub fn is_window_on_desktop_index(&self, hwnd: HWND, index: usize) -> Result<bool, String> {
         self.require_compatible()?;
-        let desktop = self.find(desktop)?;
-        winvd::is_window_on_desktop(desktop.index as u32, to_win_hwnd(hwnd)).map_err(format_error)
+        winvd::is_window_on_desktop(index as u32, to_win_hwnd(hwnd)).map_err(format_error)
     }
 
-    // Function purpose: Returns whether window on current desktop.
+    pub fn is_window_on_desktop(&self, hwnd: HWND, desktop: &DesktopId) -> Result<bool, String> {
+        let desktops = self.list()?;
+        let desktop = self.find_in(&desktops, desktop)?;
+        self.is_window_on_desktop_index(hwnd, desktop.index)
+    }
+
     pub fn is_window_on_current_desktop(&self, hwnd: HWND) -> Result<bool, String> {
         self.require_compatible()?;
         winvd::is_window_on_current_desktop(to_win_hwnd(hwnd)).map_err(format_error)
     }
 
-    // Function purpose: Returns whether window pinned.
     pub fn is_window_pinned(&self, hwnd: HWND) -> Result<bool, String> {
         self.require_compatible()?;
         winvd::is_pinned_window(to_win_hwnd(hwnd)).map_err(format_error)
     }
 
-    // Function purpose: Performs the find operation required by this module.
-    fn find(&self, id: &DesktopId) -> Result<DesktopInfo, String> {
-        self.list()?
-            .into_iter()
+    fn find_in<'a>(
+        &self,
+        desktops: &'a [DesktopInfo],
+        id: &DesktopId,
+    ) -> Result<&'a DesktopInfo, String> {
+        desktops
+            .iter()
             .find(|desktop| &desktop.id == id)
             .ok_or_else(|| format!("desktop {} is no longer present", id.0))
     }
 
-    // Function purpose: Performs the require compatible operation required by this module.
     fn require_compatible(&self) -> Result<(), String> {
         if self.compatible {
             Ok(())
@@ -196,60 +234,90 @@ impl WinvdBackend {
     }
 }
 
-// Function purpose: Returns whether supported version.
+fn same_topology(left: &[DesktopInfo], right: &[DesktopInfo]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| left.id == right.id && left.index == right.index)
+}
+
 fn is_supported_version(version: WindowsVersion) -> bool {
     version.major == 10
         && match version.build {
             26_100 => version.revision >= 2_605,
             26_200 => version.revision >= 8_117,
+            28_000 => true,
             _ => false,
         }
 }
 
-// Function purpose: Performs the to win hwnd operation required by this module.
 fn to_win_hwnd(hwnd: HWND) -> WinHwnd {
     WinHwnd(hwnd as *mut c_void)
 }
 
-// Function purpose: Formats error.
 fn format_error(error: impl std::fmt::Debug) -> String {
     format!("{error:?}")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_supported_version, WindowsVersion};
+    use super::{is_supported_version, same_topology, DesktopInfo, WindowsVersion};
+    use crate::reconciliation::DesktopId;
 
-    // Function purpose: Verifies the accepts supported 26100 revisions scenario and its expected safety or state invariant.
     #[test]
-    fn accepts_supported_26100_revisions() {
+    fn accepts_supported_windows_families() {
         assert!(is_supported_version(WindowsVersion {
             major: 10,
             minor: 0,
             build: 26_100,
             revision: 8_655,
         }));
+        assert!(is_supported_version(WindowsVersion {
+            major: 10,
+            minor: 0,
+            build: 26_200,
+            revision: 8_117,
+        }));
+        assert!(is_supported_version(WindowsVersion {
+            major: 10,
+            minor: 0,
+            build: 28_000,
+            revision: 1,
+        }));
     }
 
-    // Function purpose: Verifies the rejects manifest virtualized windows 8 version scenario and its expected safety or state invariant.
     #[test]
-    fn rejects_manifest_virtualized_windows_8_version() {
+    fn rejects_manifest_virtualized_and_unknown_builds() {
         assert!(!is_supported_version(WindowsVersion {
             major: 6,
             minor: 2,
             build: 9_200,
             revision: 8_655,
         }));
-    }
-
-    // Function purpose: Verifies the preserves safe failure for unknown windows 11 builds scenario and its expected safety or state invariant.
-    #[test]
-    fn preserves_safe_failure_for_unknown_windows_11_builds() {
         assert!(!is_supported_version(WindowsVersion {
             major: 10,
             minor: 0,
             build: 22_631,
             revision: 5_000,
         }));
+    }
+
+    #[test]
+    fn topology_comparison_detects_reordering() {
+        let first = vec![
+            DesktopInfo {
+                id: DesktopId("a".to_string()),
+                index: 0,
+            },
+            DesktopInfo {
+                id: DesktopId("b".to_string()),
+                index: 1,
+            },
+        ];
+        let mut reordered = first.clone();
+        reordered.swap(0, 1);
+        assert!(same_topology(&first, &first));
+        assert!(!same_topology(&first, &reordered));
     }
 }

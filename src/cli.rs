@@ -55,7 +55,6 @@ pub enum CliError {
 }
 
 impl Invocation {
-    // Function purpose: Performs the parse operation required by this module.
     pub fn parse<I, S>(args: I) -> Result<Self, CliError>
     where
         I: IntoIterator<Item = S>,
@@ -92,7 +91,6 @@ impl Invocation {
         })
     }
 
-    // Function purpose: Performs the needs console operation required by this module.
     pub fn needs_console(&self) -> bool {
         !matches!(
             self.command,
@@ -104,7 +102,6 @@ impl Invocation {
     }
 }
 
-// Function purpose: Parses command.
 fn parse_command(args: &[String]) -> Result<Command, CliError> {
     if args.is_empty() {
         return Ok(Command::Run(RunOptions::default()));
@@ -133,7 +130,7 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
         "support-bundle" => exact(args, Command::SupportBundle),
         "shutdown" => exact(args, Command::Shutdown),
         "--version" | "version" => exact(args, Command::Version),
-        "--help" | "help" => Ok(Command::Help),
+        "--help" | "help" => exact(args, Command::Help),
         "desktops" => match args.get(1).map(String::as_str) {
             Some("list") if args.len() == 2 => Ok(Command::DesktopsList),
             Some("current") if args.len() == 2 => Ok(Command::DesktopsCurrent),
@@ -179,7 +176,6 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
     }
 }
 
-// Function purpose: Performs the exact operation required by this module.
 fn exact(args: &[String], command: Command) -> Result<Command, CliError> {
     if args.len() == 1 {
         Ok(command)
@@ -188,7 +184,7 @@ fn exact(args: &[String], command: Command) -> Result<Command, CliError> {
     }
 }
 
-pub const HELP: &str = r#"DeskPilot 0.1.0
+pub const HELP: &str = r#"DeskPilot
 
 Usage:
   DeskPilot.exe [--data-dir PATH]

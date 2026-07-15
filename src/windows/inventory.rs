@@ -27,6 +27,12 @@ pub struct DesktopInventory {
     pub windows: HashMap<DesktopId, HashSet<crate::reconciliation::WindowToken>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MappingOutcome {
+    Mapped(DesktopId),
+    Indeterminate,
+}
+
 // Function purpose: Builds a fresh ordered desktop snapshot with current occupancy and empty-grace state.
 pub fn snapshot(
     backend: &WinvdBackend,
@@ -36,14 +42,15 @@ pub fn snapshot(
     detailed_snapshot(backend, config, grace).map(|inventory| inventory.states)
 }
 
-// Function purpose: Builds desktop occupancy together with stable window tokens used to distinguish real application creation from switch-time shell noise.
+// Function purpose: Builds occupancy and stable window tokens while converting any ambiguous trust-boundary result into Unknown rather than Empty.
 pub fn detailed_snapshot(
     backend: &WinvdBackend,
     config: &Config,
     grace: &HashMap<DesktopId, bool>,
 ) -> Result<DesktopInventory, String> {
-    let desktops = backend.list()?;
-    let current = backend.current()?;
+    let topology = backend.topology()?;
+    let desktops = topology.desktops;
+    let current = topology.current;
     let mut occupancy: HashMap<DesktopId, Occupancy> = desktops
         .iter()
         .map(|desktop| (desktop.id.clone(), Occupancy::Empty))
@@ -52,9 +59,13 @@ pub fn detailed_snapshot(
         .iter()
         .map(|desktop| (desktop.id.clone(), HashSet::new()))
         .collect();
+    let mut mapping_uncertain = false;
 
     for hwnd in enumerate_windows() {
         let Some(identity) = inspect_identity(hwnd) else {
+            if is_potential_application_surface(hwnd) {
+                mapping_uncertain = true;
+            }
             continue;
         };
         if identity.process_id == current_process_id()
@@ -85,15 +96,25 @@ pub fn detailed_snapshot(
             continue;
         }
 
-        if let Some(desktop) = locate_window_desktop(backend, &desktops, &current.id, hwnd) {
-            occupancy.insert(desktop.clone(), Occupancy::Occupied);
-            if window_is_confirmable_user_surface(hwnd, &identity.class_name) {
-                windows
-                    .entry(desktop)
-                    .or_default()
-                    .insert(hwnd as usize as crate::reconciliation::WindowToken);
+        match locate_window_desktop(backend, &desktops, &current.id, hwnd) {
+            MappingOutcome::Mapped(desktop) => {
+                occupancy.insert(desktop.clone(), Occupancy::Occupied);
+                if window_is_confirmable_user_surface(hwnd, &identity.class_name) {
+                    windows
+                        .entry(desktop)
+                        .or_default()
+                        .insert(hwnd as usize as crate::reconciliation::WindowToken);
+                }
             }
+            MappingOutcome::Indeterminate => mapping_uncertain = true,
         }
+    }
+
+    if !backend.topology_matches(&desktops)? {
+        return Err("desktop topology changed during window inventory".to_string());
+    }
+    if mapping_uncertain {
+        mark_empty_as_unknown(&mut occupancy);
     }
 
     let states = desktops
@@ -101,45 +122,70 @@ pub fn detailed_snapshot(
         .map(|desktop| DesktopState {
             current: desktop.id == current.id,
             empty_grace_elapsed: grace.get(&desktop.id).copied().unwrap_or(false),
-            occupancy: occupancy.remove(&desktop.id).unwrap_or(Occupancy::Empty),
+            occupancy: occupancy.remove(&desktop.id).unwrap_or(Occupancy::Unknown),
             id: desktop.id,
         })
         .collect();
     Ok(DesktopInventory { states, windows })
 }
 
-// Function purpose: Locates window desktop.
+fn mark_empty_as_unknown(occupancy: &mut HashMap<DesktopId, Occupancy>) {
+    for state in occupancy.values_mut() {
+        if *state == Occupancy::Empty {
+            *state = Occupancy::Unknown;
+        }
+    }
+}
+
+// Function purpose: Resolves a plausible application against one caller-owned topology and reports uncertainty explicitly.
 fn locate_window_desktop(
     backend: &WinvdBackend,
     desktops: &[DesktopInfo],
     current: &DesktopId,
     hwnd: HWND,
-) -> Option<DesktopId> {
-    if backend
-        .is_window_on_current_desktop(hwnd)
-        .is_ok_and(|present| present)
-    {
-        return Some(current.clone());
+) -> MappingOutcome {
+    if let Ok(true) = backend.is_window_on_current_desktop(hwnd) {
+        return MappingOutcome::Mapped(current.clone());
     }
 
     if let Ok(desktop) = backend.desktop_for_window(hwnd) {
         if desktops.iter().any(|candidate| candidate.id == desktop) {
-            return Some(desktop);
+            return MappingOutcome::Mapped(desktop);
         }
     }
 
-    let mut matched = None;
+    let mut matched: Option<DesktopId> = None;
+    let mut had_error = false;
     for desktop in desktops {
-        match backend.is_window_on_desktop(hwnd, &desktop.id) {
+        match backend.is_window_on_desktop_index(hwnd, desktop.index) {
             Ok(true) if matched.is_none() => matched = Some(desktop.id.clone()),
-            Ok(true) => return None,
-            Ok(false) | Err(_) => {}
+            Ok(true) => return MappingOutcome::Indeterminate,
+            Ok(false) => {}
+            Err(_) => had_error = true,
         }
     }
-    matched
+    if had_error {
+        MappingOutcome::Indeterminate
+    } else {
+        matched.map_or(MappingOutcome::Indeterminate, MappingOutcome::Mapped)
+    }
 }
 
-// Function purpose: Performs the exclusive fullscreen active operation required by this module.
+// Function purpose: Detects an application-like HWND when class or process inspection failed, so uncertainty blocks destructive removal.
+fn is_potential_application_surface(hwnd: HWND) -> bool {
+    unsafe {
+        if IsWindow(hwnd) == 0 || GetWindow(hwnd, GW_OWNER) != 0 {
+            return false;
+        }
+        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        if ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) != 0 {
+            return false;
+        }
+        IsWindowVisible(hwnd) != 0 || window_cloak_flags(hwnd) & 0x2 != 0
+    }
+}
+
+// Function purpose: Returns whether a non-shell foreground application occupies an entire monitor.
 pub fn exclusive_fullscreen_active() -> bool {
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -189,9 +235,7 @@ struct BasicWindow {
     process_id: u32,
 }
 
-// Function purpose: Enumerates windows.
 fn enumerate_windows() -> Vec<HWND> {
-    // Function purpose: Handles the native callback callback and forwards only the relevant event.
     unsafe extern "system" fn callback(hwnd: HWND, parameter: LPARAM) -> BOOL {
         let windows = unsafe { &mut *(parameter as *mut Vec<HWND>) };
         windows.push(hwnd);
@@ -202,7 +246,6 @@ fn enumerate_windows() -> Vec<HWND> {
     windows
 }
 
-// Function purpose: Performs the inspect identity operation required by this module.
 fn inspect_identity(hwnd: HWND) -> Option<BasicWindow> {
     unsafe {
         if IsWindow(hwnd) == 0 {
@@ -225,7 +268,6 @@ fn inspect_identity(hwnd: HWND) -> Option<BasicWindow> {
     }
 }
 
-// Function purpose: Returns whether an ownerless application window is eligible for inventory, including inactive File Explorer windows that Windows sometimes hides without a virtual-desktop cloak flag.
 fn is_eligible_application_window(hwnd: HWND, class_name: &str) -> bool {
     unsafe {
         if GetWindow(hwnd, GW_OWNER) != 0 {
@@ -243,7 +285,6 @@ fn is_eligible_application_window(hwnd: HWND, class_name: &str) -> bool {
     }
 }
 
-// Function purpose: Returns whether foreground application window.
 fn is_foreground_application_window(hwnd: HWND) -> bool {
     unsafe {
         if IsWindowVisible(hwnd) == 0 || GetWindow(hwnd, GW_OWNER) != 0 || window_is_cloaked(hwnd) {
@@ -254,7 +295,6 @@ fn is_foreground_application_window(hwnd: HWND) -> bool {
     }
 }
 
-// Function purpose: Returns the complete DWM cloak-reason bitset or zero when the attribute cannot be read.
 fn window_cloak_flags(hwnd: HWND) -> u32 {
     unsafe {
         let mut cloaked = 0_u32;
@@ -272,17 +312,10 @@ fn window_cloak_flags(hwnd: HWND) -> u32 {
     }
 }
 
-// Function purpose: Reports any DWM cloak reason for foreground and visibility validation.
 fn window_is_cloaked(hwnd: HWND) -> bool {
     window_cloak_flags(hwnd) != 0
 }
 
-// Function purpose: Counts inactive application windows only when Windows shell virtual-desktop cloaking is present.
-fn window_is_shell_cloaked(hwnd: HWND) -> bool {
-    window_cloak_flags(hwnd) & 0x2 != 0
-}
-
-// Function purpose: Accepts a visible current-desktop window, a virtual-desktop-cloaked inactive window, or a recognized inactive File Explorer top-level window as persistent user-surface evidence.
 fn window_is_confirmable_user_surface(hwnd: HWND, class_name: &str) -> bool {
     inventory_visibility_allows(
         unsafe { IsWindowVisible(hwnd) != 0 },
@@ -291,12 +324,10 @@ fn window_is_confirmable_user_surface(hwnd: HWND, class_name: &str) -> bool {
     )
 }
 
-// Function purpose: Centralizes visibility rules so real File Explorer windows remain countable when Windows reports them hidden without the expected shell-cloak bit.
 fn inventory_visibility_allows(visible: bool, cloak_flags: u32, class_name: &str) -> bool {
     (visible && cloak_flags == 0) || cloak_flags & 0x2 != 0 || is_file_explorer_class(class_name)
 }
 
-// Function purpose: Performs the executable name operation required by this module.
 fn executable_name(process_id: u32) -> Result<String, String> {
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id);
@@ -314,7 +345,6 @@ fn executable_name(process_id: u32) -> Result<String, String> {
     }
 }
 
-// Function purpose: Performs the rect covers operation required by this module.
 fn rect_covers(window: RECT, monitor: RECT) -> bool {
     window.left <= monitor.left
         && window.top <= monitor.top
@@ -322,7 +352,6 @@ fn rect_covers(window: RECT, monitor: RECT) -> bool {
         && window.bottom >= monitor.bottom
 }
 
-// Function purpose: Performs the ignored shell executable operation required by this module.
 fn ignored_shell_executable(executable: &str) -> bool {
     const EXECUTABLES: &[&str] = &[
         "backgroundTaskHost.exe",
@@ -347,7 +376,6 @@ fn ignored_shell_executable(executable: &str) -> bool {
         .any(|value| value.eq_ignore_ascii_case(executable))
 }
 
-// Function purpose: Ignores Explorer shell infrastructure while preserving actual File Explorer application windows.
 fn ignored_process_window(executable: &str, class_name: &str) -> bool {
     if executable.eq_ignore_ascii_case("explorer.exe") {
         !is_file_explorer_class(class_name)
@@ -356,14 +384,12 @@ fn ignored_process_window(executable: &str, class_name: &str) -> bool {
     }
 }
 
-// Function purpose: Recognizes the top-level Win32 classes used by real File Explorer windows.
 fn is_file_explorer_class(class_name: &str) -> bool {
     ["CabinetWClass", "ExploreWClass"]
         .iter()
         .any(|value| value.eq_ignore_ascii_case(class_name))
 }
 
-// Function purpose: Performs the ignored class operation required by this module.
 fn ignored_class(class_name: &str) -> bool {
     const CLASSES: &[&str] = &[
         "ApplicationManager_DesktopShellWindow",
@@ -397,11 +423,29 @@ fn ignored_class(class_name: &str) -> bool {
 mod tests {
     use super::{
         ignored_class, ignored_process_window, ignored_shell_executable,
-        inventory_visibility_allows, rect_covers,
+        inventory_visibility_allows, mark_empty_as_unknown, rect_covers,
     };
+    use crate::reconciliation::{DesktopId, Occupancy};
+    use std::collections::HashMap;
     use windows_sys::Win32::Foundation::RECT;
 
-    // Function purpose: Verifies the shell surfaces are not user applications scenario and its expected safety or state invariant.
+    #[test]
+    fn ambiguous_mapping_converts_only_empty_states_to_unknown() {
+        let mut occupancy = HashMap::from([
+            (DesktopId("occupied".to_string()), Occupancy::Occupied),
+            (DesktopId("empty".to_string()), Occupancy::Empty),
+        ]);
+        mark_empty_as_unknown(&mut occupancy);
+        assert_eq!(
+            occupancy.get(&DesktopId("occupied".to_string())),
+            Some(&Occupancy::Occupied)
+        );
+        assert_eq!(
+            occupancy.get(&DesktopId("empty".to_string())),
+            Some(&Occupancy::Unknown)
+        );
+    }
+
     #[test]
     fn shell_surfaces_are_not_user_applications() {
         assert!(ignored_class("Progman"));
@@ -418,7 +462,6 @@ mod tests {
         assert!(!ignored_process_window("EXPLORER.EXE", "ExploreWClass"));
     }
 
-    // Function purpose: Verifies hidden inactive File Explorer windows remain inventory evidence while unrelated hidden windows do not.
     #[test]
     fn hidden_file_explorer_remains_countable() {
         assert!(inventory_visibility_allows(false, 0, "CabinetWClass"));
@@ -428,7 +471,6 @@ mod tests {
         assert!(inventory_visibility_allows(true, 0, "Notepad"));
     }
 
-    // Function purpose: Verifies the fullscreen requires monitor coverage scenario and its expected safety or state invariant.
     #[test]
     fn fullscreen_requires_monitor_coverage() {
         let monitor = RECT {

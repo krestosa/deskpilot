@@ -56,7 +56,7 @@ When the final spare becomes occupied, a new spare is created. When a non-curren
 
 ## Input behavior
 
-The mouse and keyboard hooks only classify input and enqueue navigation. After DeskPilot consumes Win+wheel, version 0.1.3 holds a neutral `F24` key until the physical left or right Windows key is released, then releases `F24` from the hook thread. This keeps the complete Windows-key press classified as a chord and prevents Start from opening when Win is released.
+The mouse and keyboard hooks only classify input and enqueue navigation. After DeskPilot consumes Win+wheel, it holds a neutral `F24` key until the physical left or right Windows key is released, then releases `F24` from the hook thread. This keeps the complete Windows-key press classified as a chord and prevents Start from opening when Win is released.
 
 Navigation uses circular `wrap` mode by default: moving past the final desktop selects the first, and moving before the first selects the final desktop. `clamp` remains configurable.
 
@@ -147,7 +147,7 @@ Example:
 
 ```json
 {
-  "version": "0.1.3",
+  "version": "0.1.8",
   "enabled": true,
   "dynamic": true,
   "direction": "normal",
@@ -175,7 +175,7 @@ It does not follow symlinks and does not include memory, window contents or unre
 
 Requirements:
 
-- Rust 1.85.0, selected automatically by the committed `rust-toolchain.toml`;
+- Rust 1.88.0, selected automatically by the committed `rust-toolchain.toml`;
 - Visual Studio 2022 Build Tools with MSVC v143;
 - Windows 11 SDK;
 - PowerShell 7 or Windows PowerShell 5.1.
@@ -192,13 +192,13 @@ cargo build --release --locked --target x86_64-pc-windows-msvc
 .\scripts\build-portable.ps1
 ```
 
-Dependency-maintenance changes must regenerate and commit `Cargo.lock` under Rust 1.85.0. The direct `time` dependency is fixed to `0.3.45` because newer releases require a newer compiler than DeskPilot's declared MSRV.
+Dependency-maintenance changes must regenerate and commit `Cargo.lock` under Rust 1.88.0. The direct `time` dependency is fixed to `0.3.47`, the first release patched for `RUSTSEC-2026-0009`; that release also establishes the current compiler baseline.
 
 The release manifest uses `requestedExecutionLevel="asInvoker"`. The package contains no PDB, installer or runtime download.
 
 ## Validation
 
-Hosted Windows CI proves formatting, linting, deterministic state-machine tests, release compilation, local CLI behavior, exact license bytes and portable packaging. Real keyboard timing, Explorer integration and virtual-desktop lifecycle are additionally exercised by the dedicated interactive Windows workflow; hosted non-interactive checks are not represented as physical input proof.
+Hosted Windows CI proves formatting, dependency auditing, linting, deterministic state-machine tests, release compilation, local CLI behavior, exact license bytes and portable packaging. Real keyboard timing, Explorer integration and virtual-desktop lifecycle are additionally exercised by the dedicated interactive Windows workflow; hosted non-interactive checks are not represented as physical input proof.
 
 See:
 
@@ -214,7 +214,6 @@ DeskPilot makes no runtime network requests and contains no telemetry. It does n
 ## License
 
 DeskPilot is licensed under PolyForm Strict License 1.0.0. `LICENSE.md` is the byte-identical official license text verified by SHA-256 in CI. Third-party notices are in `THIRD_PARTY_NOTICES.md`.
-
 
 ## Input isolation
 
