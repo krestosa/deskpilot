@@ -23,9 +23,10 @@ jobs:
 
     steps:
       - name: Checkout exact dispatched SHA
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Verify interactive Windows 11 session
         shell: pwsh
@@ -36,11 +37,11 @@ jobs:
           if (-not [Environment]::Is64BitOperatingSystem) { throw 'Runner is not x64.' }
           if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { throw 'Explorer is not running.' }
 
-      - name: Install stable Rust MSVC
+      - name: Install pinned Rust MSVC
         shell: pwsh
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install 1.85.0 --profile minimal
+          rustup default 1.85.0
           rustup target add $env:TARGET
 
       - name: Verify committed lockfile
@@ -65,7 +66,7 @@ jobs:
 
       - name: Upload smoke evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: DeskPilot-interactive-${{ github.sha }}
           path: artifacts/windows-smoke/**
