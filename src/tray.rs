@@ -1,4 +1,4 @@
-// File purpose: Implements the native notification-area icon, menu, commands, and Explorer recovery.
+// File purpose: Implements the accessible native notification-area icon, menu, commands, and Explorer recovery.
 use std::mem::{size_of, zeroed};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
@@ -9,16 +9,16 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::GetCurrentProcessId;
 use windows_sys::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-    NOTIFYICONDATAW,
+    NIM_SETFOCUS, NIM_SETVERSION, NOTIFYICONDATAW, NOTIFYICON_VERSION_4,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuItem, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
     DispatchMessageW, GetCursorPos, GetMessageW, LoadIconW, PostMessageW, PostQuitMessage,
     RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu, TranslateMessage,
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, IDI_APPLICATION, IDI_ERROR, IDI_WARNING, MF_CHECKED,
-    MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON,
-    WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_LBUTTONDBLCLK, WM_RBUTTONUP, WNDCLASSW,
-    WS_OVERLAPPED,
+    MF_GRAYED, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+    TPM_RIGHTBUTTON, WM_APP, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONDBLCLK,
+    WM_NULL, WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_OVERLAPPED,
 };
 
 use crate::config::{NavigationMode, WheelDirection};
@@ -26,6 +26,8 @@ use crate::windows::util::wide;
 
 const CALLBACK_MESSAGE: u32 = WM_APP + 42;
 const TRAY_ID: u32 = 1;
+const NIN_SELECT_EVENT: u32 = WM_USER;
+const NIN_KEYSELECT_EVENT: u32 = WM_USER + 1;
 
 const CMD_TOGGLE_ENABLED: usize = 1001;
 const CMD_TOGGLE_DYNAMIC: usize = 1002;
@@ -65,12 +67,12 @@ pub struct TrayState {
     direction: AtomicU8,
     navigation: AtomicU8,
     startup: AtomicBool,
+    backend_ready: AtomicBool,
     error: AtomicBool,
     hwnd: std::sync::Mutex<HWND>,
 }
 
 impl TrayState {
-    // Function purpose: Constructs a new initialized value for this type.
     fn new() -> Self {
         Self {
             enabled: AtomicBool::new(true),
@@ -78,12 +80,12 @@ impl TrayState {
             direction: AtomicU8::new(0),
             navigation: AtomicU8::new(0),
             startup: AtomicBool::new(false),
+            backend_ready: AtomicBool::new(false),
             error: AtomicBool::new(false),
             hwnd: std::sync::Mutex::new(0),
         }
     }
 
-    // Function purpose: Performs the update operation required by this module.
     pub fn update(
         &self,
         enabled: bool,
@@ -91,6 +93,7 @@ impl TrayState {
         direction: WheelDirection,
         navigation: NavigationMode,
         startup: bool,
+        backend_ready: bool,
         error: bool,
     ) {
         self.enabled.store(enabled, Ordering::Release);
@@ -104,10 +107,11 @@ impl TrayState {
             Ordering::Release,
         );
         self.startup.store(startup, Ordering::Release);
+        self.backend_ready.store(backend_ready, Ordering::Release);
         self.error.store(error, Ordering::Release);
         if let Ok(hwnd) = self.hwnd.lock() {
             if *hwnd != 0 {
-                update_icon(*hwnd, error, enabled);
+                modify_icon(*hwnd, error, enabled);
             }
         }
     }
@@ -119,7 +123,6 @@ pub struct Tray {
 }
 
 impl Tray {
-    // Function purpose: Starts the component and returns the controller used to update or stop it.
     pub fn start(sender: Sender<TrayCommand>) -> Result<Self, String> {
         COMMAND_SENDER
             .set(sender)
@@ -140,12 +143,10 @@ impl Tray {
         })
     }
 
-    // Function purpose: Performs the state operation required by this module.
     pub fn state(&self) -> &Arc<TrayState> {
         &self.state
     }
 
-    // Function purpose: Stops the component, signals its worker thread, and waits for native resources to be released.
     pub fn stop(&mut self) {
         if let Ok(hwnd) = self.state.hwnd.lock() {
             if *hwnd != 0 {
@@ -159,13 +160,11 @@ impl Tray {
 }
 
 impl Drop for Tray {
-    // Function purpose: Releases the native or background resource owned by this value when it leaves scope.
     fn drop(&mut self) {
         self.stop();
     }
 }
 
-// Function purpose: Performs the tray loop operation required by this module.
 fn tray_loop(ready: Sender<Result<(), String>>) -> Result<(), String> {
     unsafe {
         let module = GetModuleHandleW(std::ptr::null());
@@ -220,7 +219,6 @@ fn tray_loop(ready: Sender<Result<(), String>>) -> Result<(), String> {
     Ok(())
 }
 
-// Function purpose: Handles the native window proc callback and forwards only the relevant event.
 unsafe extern "system" fn window_proc(
     hwnd: HWND,
     message: u32,
@@ -231,14 +229,17 @@ unsafe extern "system" fn window_proc(
         .get()
         .is_some_and(|registered| message == *registered)
     {
-        restore_icon(hwnd);
+        add_icon(hwnd);
         return 0;
     }
 
     match message {
         CALLBACK_MESSAGE => {
-            match lparam as u32 {
-                WM_RBUTTONUP => show_menu(hwnd),
+            let event = lparam as u32 & 0xFFFF;
+            match event {
+                WM_RBUTTONUP | WM_CONTEXTMENU | NIN_SELECT_EVENT | NIN_KEYSELECT_EVENT => {
+                    show_menu(hwnd)
+                }
                 WM_LBUTTONDBLCLK => send(TrayCommand::ToggleEnabled),
                 _ => {}
             }
@@ -270,14 +271,12 @@ unsafe extern "system" fn window_proc(
     }
 }
 
-// Function purpose: Performs the send operation required by this module.
 fn send(command: TrayCommand) {
     if let Some(sender) = COMMAND_SENDER.get() {
         let _ = sender.send(command);
     }
 }
 
-// Function purpose: Performs the show menu operation required by this module.
 fn show_menu(hwnd: HWND) {
     unsafe {
         let menu = CreatePopupMenu();
@@ -290,54 +289,41 @@ fn show_menu(hwnd: HWND) {
         let inverted = state.is_some_and(|value| value.direction.load(Ordering::Acquire) == 1);
         let wrap = state.is_some_and(|value| value.navigation.load(Ordering::Acquire) == 1);
         let startup = state.is_some_and(|value| value.startup.load(Ordering::Acquire));
-        append(
-            menu,
-            CMD_TOGGLE_ENABLED,
-            if enabled {
-                "DeskPilot: Enabled"
-            } else {
-                "DeskPilot: Disabled"
-            },
-        );
+        let backend_ready = state.is_some_and(|value| value.backend_ready.load(Ordering::Acquire));
+
+        append(menu, CMD_TOGGLE_ENABLED, if enabled {
+            "DeskPilot: Enabled"
+        } else {
+            "DeskPilot: Disabled"
+        }, true);
         check(menu, CMD_TOGGLE_ENABLED, enabled);
-        append(
-            menu,
-            CMD_TOGGLE_DYNAMIC,
-            if dynamic {
-                "Dynamic desktops: Enabled"
-            } else {
-                "Dynamic desktops: Disabled"
-            },
-        );
+        append(menu, CMD_TOGGLE_DYNAMIC, if dynamic {
+            "Dynamic desktops: Enabled"
+        } else {
+            "Dynamic desktops: Disabled"
+        }, backend_ready);
         check(menu, CMD_TOGGLE_DYNAMIC, dynamic);
-        append(
-            menu,
-            CMD_TOGGLE_DIRECTION,
-            if inverted {
-                "Direction: Inverted"
-            } else {
-                "Direction: Normal"
-            },
-        );
-        append(
-            menu,
-            CMD_TOGGLE_NAVIGATION,
-            if wrap {
-                "Navigation: Wrap"
-            } else {
-                "Navigation: Clamp"
-            },
-        );
+        append(menu, CMD_TOGGLE_DIRECTION, if inverted {
+            "Direction: Inverted"
+        } else {
+            "Direction: Normal"
+        }, backend_ready);
+        append(menu, CMD_TOGGLE_NAVIGATION, if wrap {
+            "Navigation: Wrap"
+        } else {
+            "Navigation: Clamp"
+        }, backend_ready);
         AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
-        append(menu, CMD_RECONCILE, "Reconcile now");
-        append(menu, CMD_RELOAD, "Reload configuration");
-        append(menu, CMD_OPEN_CONFIG, "Open configuration");
-        append(menu, CMD_DIAGNOSTICS, "Diagnostics");
-        append(menu, CMD_TOGGLE_STARTUP, "Start with Windows");
+        append(menu, CMD_RECONCILE, "Reconcile now", backend_ready);
+        append(menu, CMD_RELOAD, "Reload configuration", true);
+        append(menu, CMD_OPEN_CONFIG, "Open configuration", true);
+        append(menu, CMD_DIAGNOSTICS, "Diagnostics", true);
+        append(menu, CMD_TOGGLE_STARTUP, "Start with Windows", true);
         check(menu, CMD_TOGGLE_STARTUP, startup);
-        append(menu, CMD_OPEN_LOGS, "Open logs");
+        append(menu, CMD_OPEN_LOGS, "Open logs", true);
         AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
-        append(menu, CMD_EXIT, "Exit");
+        append(menu, CMD_EXIT, "Exit", true);
+
         let mut point: POINT = zeroed();
         GetCursorPos(&mut point);
         SetForegroundWindow(hwnd);
@@ -350,16 +336,17 @@ fn show_menu(hwnd: HWND) {
             hwnd,
             std::ptr::null(),
         );
+        PostMessageW(hwnd, WM_NULL, 0, 0);
         DestroyMenu(menu);
+        focus_icon(hwnd);
     }
 }
 
-// Function purpose: Performs the append operation required by this module.
-unsafe fn append(menu: isize, id: usize, label: &str) {
-    unsafe { AppendMenuW(menu, MF_STRING, id, wide(label).as_ptr()) };
+unsafe fn append(menu: isize, id: usize, label: &str, enabled: bool) {
+    let flags = MF_STRING | if enabled { 0 } else { MF_GRAYED };
+    unsafe { AppendMenuW(menu, flags, id, wide(label).as_ptr()) };
 }
 
-// Function purpose: Performs the check operation required by this module.
 unsafe fn check(menu: isize, id: usize, checked: bool) {
     unsafe {
         CheckMenuItem(
@@ -370,21 +357,35 @@ unsafe fn check(menu: isize, id: usize, checked: bool) {
     };
 }
 
-// Function purpose: Performs the add icon operation required by this module.
 fn add_icon(hwnd: HWND) {
-    restore_icon(hwnd);
+    let (error, enabled) = icon_state();
+    let mut data = icon_data(hwnd, error, enabled);
+    unsafe {
+        if Shell_NotifyIconW(NIM_ADD, &data) != 0 {
+            data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+            let _ = Shell_NotifyIconW(NIM_SETVERSION, &data);
+        }
+    }
 }
 
-// Function purpose: Performs the restore icon operation required by this module.
-fn restore_icon(hwnd: HWND) {
+fn modify_icon(hwnd: HWND, error: bool, enabled: bool) {
+    let data = icon_data(hwnd, error, enabled);
+    unsafe {
+        if Shell_NotifyIconW(NIM_MODIFY, &data) == 0 {
+            add_icon(hwnd);
+        }
+    }
+}
+
+fn icon_state() -> (bool, bool) {
     let state = STATE.get();
-    let enabled = state.is_none_or(|value| value.enabled.load(Ordering::Acquire));
-    let error = state.is_some_and(|value| value.error.load(Ordering::Acquire));
-    update_icon(hwnd, error, enabled);
+    (
+        state.is_some_and(|value| value.error.load(Ordering::Acquire)),
+        state.is_none_or(|value| value.enabled.load(Ordering::Acquire)),
+    )
 }
 
-// Function purpose: Updates icon.
-fn update_icon(hwnd: HWND, error: bool, enabled: bool) {
+fn icon_data(hwnd: HWND, error: bool, enabled: bool) -> NOTIFYICONDATAW {
     unsafe {
         let mut data: NOTIFYICONDATAW = zeroed();
         data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
@@ -403,7 +404,7 @@ fn update_icon(hwnd: HWND, error: bool, enabled: bool) {
             },
         );
         let tip = wide(if error {
-            "DeskPilot — backend error"
+            "DeskPilot — backend unavailable"
         } else if enabled {
             "DeskPilot — enabled"
         } else {
@@ -412,14 +413,20 @@ fn update_icon(hwnd: HWND, error: bool, enabled: bool) {
         for (target, source) in data.szTip.iter_mut().zip(tip) {
             *target = source;
         }
-        let action = if data.hIcon == 0 { NIM_ADD } else { NIM_MODIFY };
-        if Shell_NotifyIconW(action, &data) == 0 {
-            let _ = Shell_NotifyIconW(NIM_ADD, &data);
-        }
+        data
     }
 }
 
-// Function purpose: Deletes icon.
+fn focus_icon(hwnd: HWND) {
+    unsafe {
+        let mut data: NOTIFYICONDATAW = zeroed();
+        data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
+        data.hWnd = hwnd;
+        data.uID = TRAY_ID;
+        let _ = Shell_NotifyIconW(NIM_SETFOCUS, &data);
+    }
+}
+
 fn delete_icon(hwnd: HWND) {
     unsafe {
         let mut data: NOTIFYICONDATAW = zeroed();
