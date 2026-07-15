@@ -62,8 +62,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force artifacts | Out-Null
-          cmd /c "cargo audit --json --file Cargo.lock > artifacts\audit.json"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cargo = (Get-Command cargo).Source
+          $process = Start-Process -FilePath $cargo -ArgumentList @('audit', '--json', '--file', 'Cargo.lock') -NoNewWindow -Wait -PassThru -RedirectStandardOutput 'artifacts\audit.json' -RedirectStandardError 'artifacts\audit.stderr.txt'
+          if ($process.ExitCode -ne 0) { exit $process.ExitCode }
 
       - name: Check Rust formatting
         shell: pwsh
