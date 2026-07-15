@@ -146,9 +146,8 @@ fn locate_window_desktop(
     current: &DesktopId,
     hwnd: HWND,
 ) -> MappingOutcome {
-    match backend.is_window_on_current_desktop(hwnd) {
-        Ok(true) => return MappingOutcome::Mapped(current.clone()),
-        Ok(false) | Err(_) => {}
+    if let Ok(true) = backend.is_window_on_current_desktop(hwnd) {
+        return MappingOutcome::Mapped(current.clone());
     }
 
     if let Ok(desktop) = backend.desktop_for_window(hwnd) {
