@@ -14,9 +14,10 @@ use windows_sys::Win32::Security::{
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, REG_DWORD,
 };
+use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows_sys::Win32::System::SystemInformation::{GetVersionExW, OSVERSIONINFOW};
 use windows_sys::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentProcessId, OpenProcessToken, ProcessIdToSessionId,
+    GetCurrentProcess, GetCurrentProcessId, OpenProcessToken,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, GetShellWindow};
 
@@ -105,7 +106,7 @@ fn read_ubr() -> Option<u32> {
         let result = RegQueryValueExW(
             key,
             value_name.as_ptr(),
-            std::ptr::null_mut(),
+            0,
             &mut value_type,
             (&mut value as *mut u32).cast::<u8>(),
             &mut size,
