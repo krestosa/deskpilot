@@ -141,10 +141,10 @@
         if let Some(tray) = tray {
             let config = self.config_read();
             let backend_ready = self.backend.compatible();
-            tray.state().update(
-                config.enabled,
-                config.desktops.dynamic && !self.dynamic_forced_off,
-                config.wheel.direction,
-                config.wheel.navigation,
-                startup::is_enabled(),
+            tray.state().update(crate::tray::TrayStatus {
+                enabled: config.enabled,
+                dynamic: config.desktops.dynamic && !self.dynamic_forced_off,
+                direction: config.wheel.direction,
+                navigation: config.wheel.navigation,
+                startup: startup::is_enabled(),
                 backend_ready,
