@@ -822,7 +822,7 @@ fn install_panic_hook(data_dir: &Path) {
             "crash-{}.txt",
             timestamp_utc().replace([':', '.'], "-")
         ));
-        let message = format!("DeskPilot {}\n{}\n", APP_VERSION, info);
+        let message = format!("DeskPilot {APP_VERSION}\n{info}\n");
         let _ = fs::write(
             path,
             message
