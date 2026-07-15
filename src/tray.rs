@@ -60,6 +60,17 @@ pub enum TrayCommand {
     Exit,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TrayStatus {
+    pub enabled: bool,
+    pub dynamic: bool,
+    pub direction: WheelDirection,
+    pub navigation: NavigationMode,
+    pub startup: bool,
+    pub backend_ready: bool,
+    pub error: bool,
+}
+
 #[derive(Debug)]
 pub struct TrayState {
     enabled: AtomicBool,
@@ -86,32 +97,24 @@ impl TrayState {
         }
     }
 
-    pub fn update(
-        &self,
-        enabled: bool,
-        dynamic: bool,
-        direction: WheelDirection,
-        navigation: NavigationMode,
-        startup: bool,
-        backend_ready: bool,
-        error: bool,
-    ) {
-        self.enabled.store(enabled, Ordering::Release);
-        self.dynamic.store(dynamic, Ordering::Release);
+    pub fn update(&self, status: TrayStatus) {
+        self.enabled.store(status.enabled, Ordering::Release);
+        self.dynamic.store(status.dynamic, Ordering::Release);
         self.direction.store(
-            u8::from(matches!(direction, WheelDirection::Inverted)),
+            u8::from(matches!(status.direction, WheelDirection::Inverted)),
             Ordering::Release,
         );
         self.navigation.store(
-            u8::from(matches!(navigation, NavigationMode::Wrap)),
+            u8::from(matches!(status.navigation, NavigationMode::Wrap)),
             Ordering::Release,
         );
-        self.startup.store(startup, Ordering::Release);
-        self.backend_ready.store(backend_ready, Ordering::Release);
-        self.error.store(error, Ordering::Release);
+        self.startup.store(status.startup, Ordering::Release);
+        self.backend_ready
+            .store(status.backend_ready, Ordering::Release);
+        self.error.store(status.error, Ordering::Release);
         if let Ok(hwnd) = self.hwnd.lock() {
             if *hwnd != 0 {
-                modify_icon(*hwnd, error, enabled);
+                modify_icon(*hwnd, status.error, status.enabled);
             }
         }
     }
