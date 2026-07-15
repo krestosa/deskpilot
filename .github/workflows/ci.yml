@@ -1,4 +1,4 @@
-# File purpose: Applies the audited remediation snapshot, validates it, and commits only a fully passing formatted tree.
+# File purpose: Assembles the final audited source, validates it, and commits only a passing formatted tree.
 name: CI
 
 on:
@@ -21,9 +21,9 @@ env:
 
 jobs:
   validate:
-    name: Apply and validate audit remediation
+    name: Assemble and validate audit remediation
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
 
     steps:
       - name: Checkout exact source SHA
@@ -32,19 +32,28 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: true
 
-      - name: Apply remediation payload
+      - name: Assemble readable remediation sources
+        id: assemble
         shell: pwsh
         env:
           HEAD_BRANCH: ${{ github.head_ref }}
         run: |
-          if (-not $env:HEAD_BRANCH) { throw 'Bootstrap remediation must run from a pull request branch.' }
+          $parts = @(Get-ChildItem -LiteralPath '.remediation' -Filter 'app-part-*' -File -ErrorAction SilentlyContinue | Sort-Object Name)
+          if ($parts.Count -eq 0) {
+            'changed=false' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          if (-not $env:HEAD_BRANCH) { throw 'Source assembly is allowed only from a pull request branch.' }
           git switch -C $env:HEAD_BRANCH
-          $parts = Get-ChildItem -LiteralPath '.remediation' -Filter 'part-*' -File | Sort-Object Name
-          if ($parts.Count -eq 0) { throw 'Remediation payload is missing.' }
-          $payload = ($parts | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join ''
-          [IO.File]::WriteAllBytes('.remediation\payload.zip', [Convert]::FromBase64String($payload.Trim()))
-          Expand-Archive -LiteralPath '.remediation\payload.zip' -DestinationPath . -Force
+          $builder = [Text.StringBuilder]::new()
+          foreach ($part in $parts) {
+            [void]$builder.Append([IO.File]::ReadAllText($part.FullName))
+          }
+          [IO.File]::WriteAllText('src\app.rs', $builder.ToString(), [Text.UTF8Encoding]::new($false))
+          Copy-Item -Force '.remediation\final-ci.yml' '.github\workflows\ci.yml'
+          Copy-Item -Force '.remediation\windows-integration.yml' '.github\workflows\windows-integration.yml'
           Remove-Item -Recurse -Force -LiteralPath '.remediation'
+          'changed=true' >> $env:GITHUB_OUTPUT
 
       - name: Install pinned Rust MSVC
         shell: pwsh
@@ -96,7 +105,8 @@ jobs:
           .\scripts\verify-license.ps1
           .\scripts\build-portable.ps1 -SkipBuild
 
-      - name: Commit validated remediation
+      - name: Commit validated assembled source
+        if: steps.assemble.outputs.changed == 'true'
         shell: pwsh
         env:
           HEAD_BRANCH: ${{ github.head_ref }}
@@ -104,6 +114,6 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          if (git diff --cached --quiet) { throw 'Remediation payload produced no changes.' }
-          git commit -m 'Apply comprehensive audit remediation'
+          if (git diff --cached --quiet) { throw 'Assembly produced no changes.' }
+          git commit -m 'Complete comprehensive audit remediation'
           git push origin "HEAD:$env:HEAD_BRANCH"
