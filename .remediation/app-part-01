@@ -1,0 +1,150 @@
+        ipc_state: format!("active: {}", ipc.pipe_name()),
+        dynamic_forced_off: options.no_dynamic,
+        foreground: options.foreground,
+        shutdown: false,
+    };
+    state.update_tray(tray.as_ref());
+
+    let mut pending_reconcile = Some(Instant::now());
+    let mut next_watchdog = Instant::now();
+
+    while !state.shutdown {
+        let now = Instant::now();
+        let wait_until = pending_reconcile
+            .into_iter()
+            .chain(std::iter::once(next_watchdog))
+            .min()
+            .unwrap_or_else(|| now + Duration::from_secs(1));
+        let timeout = wait_until
+            .saturating_duration_since(now)
+            .min(Duration::from_secs(1));
+
+        match signal_rx.recv_timeout(timeout) {
+            Ok(AppSignal::Navigation(step)) => {
+                state.navigate(step);
+                let delay = state.config_read().desktops.reconcile_delay_ms;
+                schedule_reconcile_at_earliest(
+                    &mut pending_reconcile,
+                    Instant::now() + Duration::from_millis(delay),
+                );
+            }
+            Ok(AppSignal::Tray(command)) => match state.handle_tray(command, tray.as_ref()) {
+                Ok(true) => pending_reconcile = Some(Instant::now()),
+                Ok(false) => {}
+                Err(error) => state.error(format!("tray command failed: {error}")),
+            },
+            Ok(AppSignal::Ipc(request)) => {
+                let reconcile = state.handle_ipc(request);
+                if reconcile {
+                    pending_reconcile = Some(Instant::now());
+                }
+            }
+            Ok(AppSignal::DesktopEvent) => {
+                let delay = state.config_read().desktops.reconcile_delay_ms;
+                schedule_reconcile_at_earliest(
+                    &mut pending_reconcile,
+                    Instant::now() + Duration::from_millis(delay),
+                );
+            }
+            Ok(AppSignal::WindowEvent(event)) => {
+                state.note_window_event(event);
+                let delay = state.config_read().desktops.reconcile_delay_ms;
+                schedule_reconcile_at_earliest(
+                    &mut pending_reconcile,
+                    Instant::now() + Duration::from_millis(delay),
+                );
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+
+        let config_snapshot = state.config_read();
+        if let Some(hook) = &hook {
+            if hook.is_running() {
+                hook.set_enabled(config_snapshot.enabled);
+                hook.set_backend_ready(state.backend.compatible());
+                hook.set_wheel_config(&config_snapshot.wheel);
+                hook.set_suspended(
+                    config_snapshot.windows.suspend_in_exclusive_fullscreen
+                        && inventory::exclusive_fullscreen_active(),
+                );
+            } else if state.hook_state == "active" {
+                state.hook_state = "failed: hook thread exited".to_string();
+                state.error("input hook thread exited unexpectedly".to_string());
+            }
+        }
+
+        let now = Instant::now();
+        if now >= next_watchdog {
+            schedule_reconcile_at_earliest(&mut pending_reconcile, now);
+            next_watchdog =
+                now + Duration::from_millis(config_snapshot.desktops.watchdog_interval_ms);
+        }
+        if pending_reconcile.is_some_and(|deadline| now >= deadline) {
+            let follow_up = if config_snapshot.desktops.dynamic && !state.dynamic_forced_off {
+                let pass = state.reconcile();
+                matches!(pass, ReconcilePass::Mutated(_)) || state.spare_guard.needs_confirmation()
+            } else {
+                false
+            };
+            pending_reconcile = follow_up.then(|| {
+                Instant::now() + Duration::from_millis(config_snapshot.desktops.reconcile_delay_ms)
+            });
+            state.update_tray(tray.as_ref());
+        }
+    }
+
+    state
+        .events
+        .publish(Event::new("shutdown", "DeskPilot is shutting down"));
+    drop(desktop_listener);
+    if let Some(window_events) = &mut window_events {
+        window_events.stop();
+    }
+    if let Some(hook) = &mut hook {
+        hook.stop();
+    }
+    if let Some(tray) = &mut tray {
+        tray.stop();
+    }
+    drop(ipc);
+    log(LogLevel::Info, "shutdown complete");
+    drop(instance);
+    Ok(())
+}
+
+fn schedule_reconcile_at_earliest(pending: &mut Option<Instant>, deadline: Instant) {
+    match pending {
+        Some(current) if *current <= deadline => {}
+        _ => *pending = Some(deadline),
+    }
+}
+
+struct AppState {
+    data_dir: PathBuf,
+    config_path: PathBuf,
+    config: Arc<RwLock<Config>>,
+    backend: WinvdBackend,
+    events: Arc<EventBus>,
+    empty_since: HashMap<DesktopId, Instant>,
+    reconciler: ReconcileRuntime,
+    spare_guard: SpareGuard,
+    window_candidates: HashMap<WindowToken, Instant>,
+    last_reconciliation: Option<String>,
+    hook_state: String,
+    ipc_state: String,
+    dynamic_forced_off: bool,
+    foreground: bool,
+    shutdown: bool,
+}
+
+struct AppReconcileBackend<'a> {
+    backend: &'a WinvdBackend,
+    config: &'a Config,
+    empty_since: &'a mut HashMap<DesktopId, Instant>,
+    spare_guard: &'a mut SpareGuard,
+    window_candidates: &'a HashSet<WindowToken>,
+}
+
+impl ReconcileBackend for AppReconcileBackend<'_> {
+    fn snapshot(&mut self) -> Result<Vec<crate::reconciliation::DesktopState>, String> {
