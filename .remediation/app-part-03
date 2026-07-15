@@ -1,0 +1,150 @@
+            backend: &self.backend,
+            config: &config,
+            empty_since: &mut empty_since,
+            spare_guard: &mut spare_guard,
+            window_candidates: &window_candidates,
+        };
+        backend.snapshot()
+    }
+
+    fn handle_tray(&mut self, command: TrayCommand, tray: Option<&Tray>) -> Result<bool, String> {
+        let mut config = self.config_read();
+        let mut reconcile = false;
+        match command {
+            TrayCommand::ToggleEnabled => {
+                config.enabled = !config.enabled;
+                self.save_config(&config)?;
+            }
+            TrayCommand::ToggleDynamic => {
+                config.desktops.dynamic = !config.desktops.dynamic;
+                self.save_config(&config)?;
+                reconcile = true;
+            }
+            TrayCommand::ToggleDirection => {
+                config.wheel.direction = match config.wheel.direction {
+                    WheelDirection::Normal => WheelDirection::Inverted,
+                    WheelDirection::Inverted => WheelDirection::Normal,
+                };
+                self.save_config(&config)?;
+            }
+            TrayCommand::ToggleNavigation => {
+                config.wheel.navigation = match config.wheel.navigation {
+                    NavigationMode::Clamp => NavigationMode::Wrap,
+                    NavigationMode::Wrap => NavigationMode::Clamp,
+                };
+                self.save_config(&config)?;
+            }
+            TrayCommand::Reconcile => reconcile = true,
+            TrayCommand::Reload => {
+                self.reload()?;
+                reconcile = true;
+            }
+            TrayCommand::OpenConfig => open_path(&self.config_path),
+            TrayCommand::Diagnostics => {
+                let report = self.doctor();
+                let path = self.data_dir.join("logs").join("doctor.json");
+                let json = serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?;
+                fs::write(&path, json).map_err(|error| error.to_string())?;
+                open_path(&path);
+            }
+            TrayCommand::ToggleStartup => {
+                if startup::is_enabled() {
+                    startup::disable()?;
+                } else {
+                    startup::enable(
+                        &std::env::current_exe().map_err(|error| error.to_string())?,
+                        &self.data_dir,
+                    )?;
+                }
+            }
+            TrayCommand::OpenLogs => open_path(&self.data_dir.join("logs")),
+            TrayCommand::Exit => self.shutdown = true,
+        }
+        self.update_tray(tray);
+        Ok(reconcile)
+    }
+
+    fn handle_ipc(&mut self, request: ServerRequest) -> bool {
+        let command = request.request.command.clone();
+        let mut reconcile = false;
+        let response = match command.as_str() {
+            "status" => IpcResponse::success(self.status()),
+            "doctor" => IpcResponse::success(self.doctor()),
+            "desktops list" => self.backend.list().map_or_else(
+                |error| IpcResponse::failure(69, error),
+                |desktops| {
+                    IpcResponse::success(
+                        desktops
+                            .iter()
+                            .map(|desktop| json!({"id": desktop.id.0, "index": desktop.index}))
+                            .collect::<Vec<_>>(),
+                    )
+                },
+            ),
+            "desktops current" => self.backend.current().map_or_else(
+                |error| IpcResponse::failure(69, error),
+                |desktop| IpcResponse::success(json!({"id": desktop.id.0, "index": desktop.index})),
+            ),
+            "desktops next" => self
+                .backend
+                .switch_relative(Step::Next, self.config_read().wheel.navigation)
+                .map_or_else(
+                    |error| IpcResponse::failure(69, error),
+                    |desktop| {
+                        IpcResponse::success(json!({"id": desktop.id.0, "index": desktop.index}))
+                    },
+                ),
+            "desktops previous" => self
+                .backend
+                .switch_relative(Step::Previous, self.config_read().wheel.navigation)
+                .map_or_else(
+                    |error| IpcResponse::failure(69, error),
+                    |desktop| {
+                        IpcResponse::success(json!({"id": desktop.id.0, "index": desktop.index}))
+                    },
+                ),
+            "desktops create" => self.backend.create().map_or_else(
+                |error| IpcResponse::failure(69, error),
+                |desktop| IpcResponse::success(json!({"id": desktop.id.0, "index": desktop.index})),
+            ),
+            "reconcile" => {
+                reconcile = true;
+                IpcResponse::message("reconciliation scheduled")
+            }
+            "enable" | "disable" => {
+                let mut config = self.config_read();
+                config.enabled = command == "enable";
+                self.save_config(&config).map_or_else(
+                    |error| IpcResponse::failure(78, error),
+                    |()| IpcResponse::success(json!({"enabled": config.enabled})),
+                )
+            }
+            "reload" => {
+                reconcile = true;
+                self.reload().map_or_else(
+                    |error| IpcResponse::failure(78, error),
+                    |()| IpcResponse::message("configuration reloaded"),
+                )
+            }
+            "config path" => IpcResponse::success(json!({"path": self.config_path})),
+            "config show" => fs::read_to_string(&self.config_path).map_or_else(
+                |error| IpcResponse::failure(74, error.to_string()),
+                |text| IpcResponse::success(json!({"toml": text})),
+            ),
+            "config validate" => Config::load(&self.config_path).map_or_else(
+                |error| IpcResponse::failure(78, error.to_string()),
+                |_| IpcResponse::message("configuration valid"),
+            ),
+            "logs path" => IpcResponse::success(json!({"path": self.data_dir.join("logs")})),
+            "logs tail" => tail_log(&self.data_dir.join("logs").join("deskpilot.log"), 100)
+                .map_or_else(
+                    |error| IpcResponse::failure(74, error),
+                    |lines| IpcResponse::success(json!({"lines": lines})),
+                ),
+            "support-bundle" => {
+                let doctor = serde_json::to_string_pretty(&self.doctor()).unwrap_or_default();
+                let config_toml = toml::to_string_pretty(&self.config_read()).unwrap_or_default();
+                create_support_bundle(&self.data_dir, &doctor, &config_toml).map_or_else(
+                    |error| IpcResponse::failure(74, error),
+                    |path| IpcResponse::success(json!({"path": path})),
+                )
