@@ -51,8 +51,6 @@ jobs:
             [void]$builder.Append([IO.File]::ReadAllText($part.FullName))
           }
           [IO.File]::WriteAllText('src\app.rs', $builder.ToString(), [Text.UTF8Encoding]::new($false))
-          Copy-Item -Force '.remediation\final-ci.yml' '.github\workflows\ci.yml'
-          Copy-Item -Force '.remediation\windows-integration.yml' '.github\workflows\windows-integration.yml'
           Remove-Item -Recurse -Force -LiteralPath '.remediation'
           'changed=true' >> $env:GITHUB_OUTPUT
 
