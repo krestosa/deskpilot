@@ -139,7 +139,8 @@ impl WinvdBackend {
 
     // Function purpose: Switches to a desktop by stable identifier after resolving its current index.
     pub fn switch_to_id(&self, desktop: &DesktopId) -> Result<(), String> {
-        let target = self.find_in(&self.list()?, desktop)?;
+        let desktops = self.list()?;
+        let target = self.find_in(&desktops, desktop)?;
         winvd::switch_desktop(target.index as u32).map_err(format_error)
     }
 
