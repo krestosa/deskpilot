@@ -1,5 +1,5 @@
-                !backend_ready || self.hook_state.starts_with("failed"),
-            );
+                error: !backend_ready || self.hook_state.starts_with("failed"),
+            });
         }
     }
 
