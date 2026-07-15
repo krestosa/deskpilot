@@ -38,6 +38,7 @@ jobs:
         env:
           HEAD_BRANCH: ${{ github.head_ref }}
         run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
           $parts = @(Get-ChildItem -LiteralPath '.remediation' -Filter 'app-part-*' -File -ErrorAction SilentlyContinue | Sort-Object Name)
           if ($parts.Count -eq 0) {
             'changed=false' >> $env:GITHUB_OUTPUT
@@ -77,11 +78,16 @@ jobs:
 
       - name: Clippy
         shell: pwsh
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: |
+          cargo clippy --workspace --all-targets --locked -- -D warnings 2>&1 |
+            Tee-Object -FilePath artifacts\clippy.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Unit and integration tests
         shell: pwsh
-        run: cargo test --workspace --locked
+        run: |
+          cargo test --workspace --locked 2>&1 | Tee-Object -FilePath artifacts\tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Validate PowerShell scripts
         shell: pwsh
@@ -97,7 +103,10 @@ jobs:
 
       - name: Release build
         shell: pwsh
-        run: cargo build --release --locked --target $env:TARGET
+        run: |
+          cargo build --release --locked --target $env:TARGET 2>&1 |
+            Tee-Object -FilePath artifacts\build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify license and portable package
         shell: pwsh
@@ -117,3 +126,12 @@ jobs:
           if (git diff --cached --quiet) { throw 'Assembly produced no changes.' }
           git commit -m 'Complete comprehensive audit remediation'
           git push origin "HEAD:$env:HEAD_BRANCH"
+
+      - name: Upload bootstrap diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DeskPilot-remediation-diagnostics-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/*
+          if-no-files-found: warn
+          retention-days: 3
