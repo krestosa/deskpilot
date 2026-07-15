@@ -1,6 +1,13 @@
 <!-- File purpose: Records user-visible changes for each DeskPilot release. -->
 # Changelog
 
+## 0.1.8
+
+- Count real File Explorer windows (`CabinetWClass` and `ExploreWClass`) as user applications while continuing to ignore Explorer-owned desktop, taskbar and shell infrastructure.
+- Allow a pre-existing or event-missed eligible application to consume the protected trailing spare after three stable inventory observations.
+- Preserve the faster two-observation path for native CREATE/SHOW-confirmed windows and reject changing transient helper tokens.
+- Add regressions for an Explorer window on the final desktop, missed lifecycle events, transient surfaces and repeated noisy scrolling.
+
 ## 0.1.7
 
 - Protect the trailing spare from switch-time occupancy noise and require a qualifying native window create or show event before treating it as consumed.

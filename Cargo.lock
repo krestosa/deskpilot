@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "deskpilot"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "embed-resource",
  "serde",
