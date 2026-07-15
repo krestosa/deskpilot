@@ -39,6 +39,7 @@ pub struct DoctorReport {
     pub desktop_count: Option<usize>,
     pub current_desktop: Option<String>,
     pub occupancy: OccupancyDiagnostic,
+    pub snapshot_error: Option<String>,
     pub hook_state: String,
     pub ipc_state: String,
     pub dynamic_reconciliation: String,
@@ -48,7 +49,6 @@ pub struct DoctorReport {
 }
 
 impl DoctorReport {
-    // Function purpose: Performs the unavailable operation required by this module.
     pub fn unavailable(data_directory: PathBuf, reason: impl Into<String>) -> Self {
         Self {
             timestamp: timestamp_utc(),
@@ -77,6 +77,7 @@ impl DoctorReport {
                 empty: 0,
                 unknown: 0,
             },
+            snapshot_error: Some("runtime unavailable".to_string()),
             hook_state: "not running".to_string(),
             ipc_state: "not running".to_string(),
             dynamic_reconciliation: "not running".to_string(),
