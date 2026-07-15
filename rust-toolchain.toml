@@ -1,6 +1,6 @@
 # File purpose: Pins the compiler, components, and Windows target used for reproducible builds.
 [toolchain]
-channel = "1.85.0"
+channel = "1.88.0"
 profile = "minimal"
 components = ["clippy", "rustfmt"]
 targets = ["x86_64-pc-windows-msvc"]
