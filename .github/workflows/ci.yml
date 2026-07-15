@@ -1,4 +1,4 @@
-# File purpose: Refreshes the patched dependency lockfile, applies the Rust 1.88 lint correction, validates the complete Windows build, and publishes only passing files.
+# File purpose: Builds, audits, tests, validates, packages, and attests DeskPilot on a hosted Windows runner.
 name: CI
 
 on:
@@ -8,7 +8,9 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
+  id-token: write
+  attestations: write
 
 concurrency:
   group: deskpilot-ci-${{ github.workflow }}-${{ github.ref }}
@@ -21,7 +23,7 @@ env:
 
 jobs:
   validate:
-    name: Refresh and validate patched dependencies
+    name: Windows build and package
     runs-on: windows-latest
     timeout-minutes: 45
 
@@ -30,7 +32,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Install pinned Rust MSVC
         shell: pwsh
@@ -42,30 +44,11 @@ jobs:
           rustc --version --verbose
           cargo --version
 
-      - name: Refresh patched lockfile
+      - name: Verify committed dependency lock
         shell: pwsh
-        env:
-          HEAD_BRANCH: ${{ github.head_ref }}
         run: |
-          if (-not $env:HEAD_BRANCH) { throw 'Publication is allowed only from a pull request branch.' }
-          git switch -C $env:HEAD_BRANCH
-          cargo update -p time --precise 0.3.47
+          if (-not (Test-Path Cargo.lock -PathType Leaf)) { throw 'Cargo.lock is not committed.' }
           cargo metadata --locked --no-deps --format-version 1 | Out-Null
-
-      - name: Apply Rust 1.88 lint correction
-        shell: pwsh
-        run: |
-          $path = 'src\app.rs'
-          $content = [IO.File]::ReadAllText($path)
-          $old = 'let message = format!("DeskPilot {}\n{}\n", APP_VERSION, info);'
-          $new = 'let message = format!("DeskPilot {APP_VERSION}\n{info}\n");'
-          if ($content.Contains($old)) {
-            $content = $content.Replace($old, $new)
-            [IO.File]::WriteAllText($path, $content, [Text.UTF8Encoding]::new($false))
-          } elseif (-not $content.Contains($new)) {
-            throw 'Expected panic-report format expression was not found.'
-          }
-          cargo fmt --all
 
       - name: Install pinned cargo-audit
         shell: pwsh
@@ -137,52 +120,101 @@ jobs:
             $stdout = $process.StandardOutput.ReadToEnd()
             $stderr = $process.StandardError.ReadToEnd()
             $process.WaitForExit()
-            [pscustomobject]@{
+            $result = [pscustomobject]@{
               ExitCode = $process.ExitCode
               Stdout = $stdout.Trim()
               Stderr = $stderr.Trim()
             }
+            $stdout | Set-Content -Encoding utf8NoBOM "artifacts\$Name.stdout.txt"
+            $stderr | Set-Content -Encoding utf8NoBOM "artifacts\$Name.stderr.txt"
+            return $result
           }
 
           $version = Invoke-DeskPilotProcess -Name 'version' -Arguments @('--version')
-          if ($version.ExitCode -ne 0 -or $version.Stdout -ne 'DeskPilot 0.1.8') { throw "Invalid version output: [$($version.Stdout)] $($version.Stderr)" }
+          if ($version.ExitCode -ne 0) { throw "Version command failed: $($version.Stderr)" }
+          if ($version.Stdout -ne 'DeskPilot 0.1.8') { throw "Unexpected version output: [$($version.Stdout)]" }
+
           $help = Invoke-DeskPilotProcess -Name 'help' -Arguments @('--help')
-          if ($help.ExitCode -ne 0 -or -not $help.Stdout.StartsWith('DeskPilot') -or $help.Stdout -match 'DeskPilot 0\.1\.0') { throw 'Invalid help output.' }
+          if ($help.ExitCode -ne 0) { throw "Help command failed: $($help.Stderr)" }
+          if (-not $help.Stdout.StartsWith('DeskPilot')) { throw "Unexpected help output: [$($help.Stdout)]" }
+          if ($help.Stdout -match 'DeskPilot 0\.1\.0') { throw 'Help output contains a stale literal version.' }
+
           $config = Invoke-DeskPilotProcess -Name 'config-validate' -Arguments @('config', 'validate', '.\deskpilot.example.toml')
-          if ($config.ExitCode -ne 0 -or -not $config.Stdout.StartsWith('valid:')) { throw "Config validation failed: $($config.Stderr)" }
+          if ($config.ExitCode -ne 0) { throw "Config validation failed: $($config.Stderr)" }
+          if (-not $config.Stdout.StartsWith('valid:')) { throw "Unexpected config validation output: [$($config.Stdout)]" }
+
           $selfTestResult = Invoke-DeskPilotProcess -Name 'self-test' -Arguments @('self-test', '--backend', 'mock', '--json')
           if ($selfTestResult.ExitCode -ne 0) { throw "Mock self-test failed: $($selfTestResult.Stderr)" }
           $selfTest = $selfTestResult.Stdout | ConvertFrom-Json
-          if (-not $selfTest.passed -or $selfTest.backend -ne 'mock' -or $selfTest.cases -lt 6) { throw 'Mock backend self-test returned an invalid result.' }
+          if (-not $selfTest.passed -or $selfTest.backend -ne 'mock' -or $selfTest.cases -lt 6) {
+            throw 'Mock backend self-test returned an invalid result.'
+          }
 
-      - name: Verify exact license and portable package
+      - name: Verify exact license
+        shell: pwsh
+        run: .\scripts\verify-license.ps1
+
+      - name: Build portable package
         shell: pwsh
         run: |
-          .\scripts\verify-license.ps1
           .\scripts\build-portable.ps1 -SkipBuild 2>&1 |
             Tee-Object -FilePath artifacts\package.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Commit validated dependency and lint updates
+      - name: Verify portable structure and checksums
         shell: pwsh
-        env:
-          HEAD_BRANCH: ${{ github.head_ref }}
         run: |
-          git add Cargo.lock src/app.rs
-          if (git diff --cached --quiet) { exit 0 }
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'Regenerate lockfile and align Rust 1.88 lint'
-          git push origin "HEAD:$env:HEAD_BRANCH"
+          $required = @(
+            'dist\DeskPilot\DeskPilot.exe',
+            'dist\DeskPilot\deskpilot.example.toml',
+            'dist\DeskPilot\LICENSE.md',
+            'dist\DeskPilot\README.md',
+            'dist\DeskPilot\THIRD_PARTY_NOTICES.md',
+            'dist\DeskPilot\checksums.sha256'
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing package file: $path" }
+          }
+          $unexpected = Get-ChildItem -Recurse -File dist\DeskPilot | Where-Object Extension -in @('.pdb', '.tmp')
+          if ($unexpected) { throw "Unexpected package files: $($unexpected.FullName -join ', ')" }
+          Get-ChildItem dist\DeskPilot -File | Where-Object Name -ne 'checksums.sha256' | ForEach-Object {
+            $file = $_
+            $line = Get-Content dist\DeskPilot\checksums.sha256 | Where-Object { $_ -match "^[0-9a-f]{64}  $([regex]::Escape($file.Name))$" }
+            if (-not $line) { throw "Missing checksum for $($file.Name)" }
+            $expected = ($line -split '\s+')[0]
+            $actual = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) { throw "Checksum mismatch for $($file.Name)" }
+          }
 
-      - name: Upload diagnostics
+      - name: Capture CI metadata
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          [ordered]@{
+            commit = '${{ github.sha }}'
+            head_sha = '${{ github.event.pull_request.head.sha || github.sha }}'
+            runner = '${{ runner.os }}'
+            rustc = (rustc --version)
+            cargo = (cargo --version)
+            timestamp_utc = [DateTime]::UtcNow.ToString('o')
+          } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM artifacts\ci-metadata.json
+          if (Test-Path dist\package-report.json) { Copy-Item dist\package-report.json artifacts\package-report.json }
+
+      - name: Upload portable artifact and diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DeskPilot-lock-refresh-${{ github.event.pull_request.head.sha || github.sha }}
+          name: DeskPilot-portable-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             dist/*.zip
             dist/package-report.json
             artifacts/*
           if-no-files-found: warn
-          retention-days: 3
+          retention-days: 14
+
+      - name: Attest portable package provenance
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
+        with:
+          subject-path: dist/*.zip
