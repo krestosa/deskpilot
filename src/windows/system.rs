@@ -1,5 +1,6 @@
 // File purpose: Provides Windows version, session, Explorer, integrity, SID, console, and filesystem helpers.
 use std::ffi::c_void;
+use std::fs::OpenOptions;
 use std::mem::{size_of, zeroed};
 use std::path::Path;
 use windows_sys::Win32::Foundation::{
@@ -15,7 +16,7 @@ use windows_sys::Win32::System::Registry::{
 };
 use windows_sys::Win32::System::SystemInformation::{GetVersionExW, OSVERSIONINFOW};
 use windows_sys::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentProcessId, OpenProcessToken,
+    GetCurrentProcess, GetCurrentProcessId, OpenProcessToken, ProcessIdToSessionId,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, GetShellWindow};
 
@@ -41,12 +42,12 @@ struct RtlOsVersionInfoW {
 
 #[link(name = "ntdll")]
 unsafe extern "system" {
-    // Function purpose: Performs the rtl get version operation required by this module.
+    // Function purpose: Reads the native Windows version without manifest virtualization.
     #[link_name = "RtlGetVersion"]
     fn rtl_get_version(version_information: *mut RtlOsVersionInfoW) -> i32;
 }
 
-// Function purpose: Performs the windows version operation required by this module.
+// Function purpose: Returns the native Windows build and servicing revision.
 pub fn windows_version() -> WindowsVersion {
     let revision = read_ubr().unwrap_or(0);
     let mut version = rtl_windows_version()
@@ -56,7 +57,6 @@ pub fn windows_version() -> WindowsVersion {
     version
 }
 
-// Function purpose: Performs the rtl windows version operation required by this module.
 fn rtl_windows_version() -> Option<WindowsVersion> {
     unsafe {
         let mut info: RtlOsVersionInfoW = zeroed();
@@ -70,7 +70,6 @@ fn rtl_windows_version() -> Option<WindowsVersion> {
     }
 }
 
-// Function purpose: Performs the legacy windows version operation required by this module.
 fn legacy_windows_version() -> Option<WindowsVersion> {
     unsafe {
         let mut info: OSVERSIONINFOW = zeroed();
@@ -84,7 +83,6 @@ fn legacy_windows_version() -> Option<WindowsVersion> {
     }
 }
 
-// Function purpose: Reads ubr.
 fn read_ubr() -> Option<u32> {
     unsafe {
         let subkey = wide("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion");
@@ -119,23 +117,34 @@ fn read_ubr() -> Option<u32> {
     }
 }
 
-// Function purpose: Returns whether interactive session.
+// Function purpose: Returns whether the process has an interactive shell session.
 pub fn is_interactive_session() -> bool {
     unsafe { GetShellWindow() != 0 }
 }
 
-// Function purpose: Performs the explorer running operation required by this module.
+// Function purpose: Returns whether Explorer's taskbar window is present.
 pub fn explorer_running() -> bool {
     let class = wide("Shell_TrayWnd");
     unsafe { FindWindowW(class.as_ptr(), std::ptr::null()) != 0 }
 }
 
-// Function purpose: Performs the current process id operation required by this module.
+// Function purpose: Returns the current process identifier.
 pub fn current_process_id() -> u32 {
     unsafe { GetCurrentProcessId() }
 }
 
-// Function purpose: Performs the current user sid operation required by this module.
+// Function purpose: Returns the current Windows session identifier for IPC namespace isolation.
+pub fn current_session_id() -> Result<u32, String> {
+    unsafe {
+        let mut session_id = 0_u32;
+        if ProcessIdToSessionId(GetCurrentProcessId(), &mut session_id) == 0 {
+            return Err(format!("ProcessIdToSessionId failed: {}", GetLastError()));
+        }
+        Ok(session_id)
+    }
+}
+
+// Function purpose: Returns the string SID for the process token user.
 pub fn current_user_sid() -> Result<String, String> {
     unsafe {
         let token = open_process_token()?;
@@ -145,7 +154,7 @@ pub fn current_user_sid() -> Result<String, String> {
     }
 }
 
-// Function purpose: Performs the integrity level operation required by this module.
+// Function purpose: Returns the process integrity level for diagnostics.
 pub fn integrity_level() -> String {
     unsafe {
         let Ok(token) = open_process_token() else {
@@ -193,15 +202,28 @@ pub fn integrity_level() -> String {
     }
 }
 
-// Function purpose: Performs the portable write test operation required by this module.
+// Function purpose: Tests portable directory writability without overwriting a pre-existing path.
 pub fn portable_write_test(data_dir: &Path) -> bool {
-    let path = data_dir.join(".deskpilot-write-test");
-    std::fs::write(&path, b"deskpilot")
-        .and_then(|()| std::fs::remove_file(path))
-        .is_ok()
+    for attempt in 0..16_u32 {
+        let path = data_dir.join(format!(
+            ".deskpilot-write-test-{}-{attempt}",
+            current_process_id()
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                use std::io::Write as _;
+                let written = file.write_all(b"deskpilot").and_then(|()| file.sync_all());
+                drop(file);
+                let removed = std::fs::remove_file(path);
+                return written.is_ok() && removed.is_ok();
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
-// Function purpose: Opens process token.
 unsafe fn open_process_token() -> Result<HANDLE, String> {
     let mut token = 0;
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
@@ -212,7 +234,6 @@ unsafe fn open_process_token() -> Result<HANDLE, String> {
     Ok(token)
 }
 
-// Function purpose: Performs the token user sid operation required by this module.
 unsafe fn token_user_sid(token: HANDLE) -> Result<String, String> {
     let mut size = 0;
     let _ = unsafe { GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut size) };
@@ -256,7 +277,6 @@ unsafe fn token_user_sid(token: HANDLE) -> Result<String, String> {
 mod tests {
     use super::windows_version;
 
-    // Function purpose: Verifies the native version detection is not manifest virtualized scenario and its expected safety or state invariant.
     #[test]
     fn native_version_detection_is_not_manifest_virtualized() {
         let version = windows_version();
