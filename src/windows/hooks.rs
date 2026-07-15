@@ -2,9 +2,7 @@
 use crate::config::{Config, WheelConfig, WheelDirection};
 use crate::wheel::{Step, WheelState};
 use std::mem::{size_of, zeroed};
-use std::sync::atomic::{
-    AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicU8, Ordering,
-};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::thread::{self, JoinHandle};
@@ -112,7 +110,9 @@ impl HookController {
     }
 
     pub fn is_running(&self) -> bool {
-        self.thread.as_ref().is_some_and(|thread| !thread.is_finished())
+        self.thread
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
     }
 
     pub fn stop(&mut self) {
@@ -132,10 +132,7 @@ impl Drop for HookController {
     }
 }
 
-fn run_hook_loop(
-    context: &HookContext,
-    ready: Sender<Result<(), String>>,
-) -> Result<(), String> {
+fn run_hook_loop(context: &HookContext, ready: Sender<Result<(), String>>) -> Result<(), String> {
     unsafe {
         context
             .thread_id

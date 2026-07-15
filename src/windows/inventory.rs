@@ -122,9 +122,7 @@ pub fn detailed_snapshot(
         .map(|desktop| DesktopState {
             current: desktop.id == current.id,
             empty_grace_elapsed: grace.get(&desktop.id).copied().unwrap_or(false),
-            occupancy: occupancy
-                .remove(&desktop.id)
-                .unwrap_or(Occupancy::Unknown),
+            occupancy: occupancy.remove(&desktop.id).unwrap_or(Occupancy::Unknown),
             id: desktop.id,
         })
         .collect();

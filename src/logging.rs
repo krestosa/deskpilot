@@ -132,10 +132,7 @@ fn open_log_file(path: &Path) -> std::io::Result<File> {
 }
 
 fn rotate_locked(path: &Path, state: &mut LoggerState, incoming: u64) -> std::io::Result<()> {
-    let limit = state
-        .config
-        .max_file_size_mb
-        .saturating_mul(1024 * 1024);
+    let limit = state.config.max_file_size_mb.saturating_mul(1024 * 1024);
     let size = fs::metadata(path).map_or(0, |metadata| metadata.len());
     if size.saturating_add(incoming) < limit {
         if state.file.is_none() {

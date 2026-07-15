@@ -147,13 +147,8 @@ impl WinvdBackend {
     // Function purpose: Switches relative to one current topology while targeting the selected stable desktop ID.
     pub fn switch_relative(&self, step: Step, mode: NavigationMode) -> Result<DesktopInfo, String> {
         let topology = self.topology()?;
-        let target = target_index(
-            topology.current.index,
-            topology.desktops.len(),
-            step,
-            mode,
-        )
-        .ok_or_else(|| "navigation reached a clamped edge".to_string())?;
+        let target = target_index(topology.current.index, topology.desktops.len(), step, mode)
+            .ok_or_else(|| "navigation reached a clamped edge".to_string())?;
         let target = topology
             .desktops
             .get(target)

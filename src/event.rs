@@ -61,17 +61,20 @@ impl EventBus {
     // Function purpose: Publishes without blocking the runtime and disconnects persistently slow consumers.
     pub fn publish(&self, event: Event) {
         if let Ok(mut subscribers) = self.subscribers.lock() {
-            subscribers.retain_mut(|subscriber| match subscriber.sender.try_send(event.clone()) {
-                Ok(()) => {
-                    subscriber.consecutive_drops = 0;
-                    true
-                }
-                Err(TrySendError::Full(_)) => {
-                    subscriber.consecutive_drops = subscriber.consecutive_drops.saturating_add(1);
-                    subscriber.consecutive_drops < MAX_CONSECUTIVE_DROPS
-                }
-                Err(TrySendError::Disconnected(_)) => false,
-            });
+            subscribers.retain_mut(
+                |subscriber| match subscriber.sender.try_send(event.clone()) {
+                    Ok(()) => {
+                        subscriber.consecutive_drops = 0;
+                        true
+                    }
+                    Err(TrySendError::Full(_)) => {
+                        subscriber.consecutive_drops =
+                            subscriber.consecutive_drops.saturating_add(1);
+                        subscriber.consecutive_drops < MAX_CONSECUTIVE_DROPS
+                    }
+                    Err(TrySendError::Disconnected(_)) => false,
+                },
+            );
         }
     }
 }

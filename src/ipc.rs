@@ -369,10 +369,7 @@ fn create_server_pipe(name: &str, first_instance: bool) -> Result<OwnedHandle, S
         let pipe = CreateNamedPipeW(
             name_wide.as_ptr(),
             open_mode,
-            PIPE_TYPE_MESSAGE
-                | PIPE_READMODE_MESSAGE
-                | PIPE_WAIT
-                | PIPE_REJECT_REMOTE_CLIENTS,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             PIPE_UNLIMITED_INSTANCES,
             MAX_MESSAGE as u32,
             MAX_MESSAGE as u32,

@@ -115,12 +115,13 @@ impl ReconcileRuntime {
 
         match &mutation {
             Mutation::CreateTrailing => {
-                let created = backend
-                    .create_desktop()
-                    .map_err(|cause| ReconcileError::Mutation {
-                        operation: format!("{mutation:?}"),
-                        cause,
-                    })?;
+                let created =
+                    backend
+                        .create_desktop()
+                        .map_err(|cause| ReconcileError::Mutation {
+                            operation: format!("{mutation:?}"),
+                            cause,
+                        })?;
                 self.pending = Some(PendingTopologyMutation::Create {
                     expected: created,
                     requested_at: Instant::now(),

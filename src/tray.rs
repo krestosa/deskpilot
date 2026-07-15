@@ -294,28 +294,48 @@ fn show_menu(hwnd: HWND) {
         let startup = state.is_some_and(|value| value.startup.load(Ordering::Acquire));
         let backend_ready = state.is_some_and(|value| value.backend_ready.load(Ordering::Acquire));
 
-        append(menu, CMD_TOGGLE_ENABLED, if enabled {
-            "DeskPilot: Enabled"
-        } else {
-            "DeskPilot: Disabled"
-        }, true);
+        append(
+            menu,
+            CMD_TOGGLE_ENABLED,
+            if enabled {
+                "DeskPilot: Enabled"
+            } else {
+                "DeskPilot: Disabled"
+            },
+            true,
+        );
         check(menu, CMD_TOGGLE_ENABLED, enabled);
-        append(menu, CMD_TOGGLE_DYNAMIC, if dynamic {
-            "Dynamic desktops: Enabled"
-        } else {
-            "Dynamic desktops: Disabled"
-        }, backend_ready);
+        append(
+            menu,
+            CMD_TOGGLE_DYNAMIC,
+            if dynamic {
+                "Dynamic desktops: Enabled"
+            } else {
+                "Dynamic desktops: Disabled"
+            },
+            backend_ready,
+        );
         check(menu, CMD_TOGGLE_DYNAMIC, dynamic);
-        append(menu, CMD_TOGGLE_DIRECTION, if inverted {
-            "Direction: Inverted"
-        } else {
-            "Direction: Normal"
-        }, backend_ready);
-        append(menu, CMD_TOGGLE_NAVIGATION, if wrap {
-            "Navigation: Wrap"
-        } else {
-            "Navigation: Clamp"
-        }, backend_ready);
+        append(
+            menu,
+            CMD_TOGGLE_DIRECTION,
+            if inverted {
+                "Direction: Inverted"
+            } else {
+                "Direction: Normal"
+            },
+            backend_ready,
+        );
+        append(
+            menu,
+            CMD_TOGGLE_NAVIGATION,
+            if wrap {
+                "Navigation: Wrap"
+            } else {
+                "Navigation: Clamp"
+            },
+            backend_ready,
+        );
         AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
         append(menu, CMD_RECONCILE, "Reconcile now", backend_ready);
         append(menu, CMD_RELOAD, "Reload configuration", true);
