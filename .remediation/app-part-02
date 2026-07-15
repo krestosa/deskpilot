@@ -1,0 +1,150 @@
+        let detailed = inventory::detailed_snapshot(self.backend, self.config, &HashMap::new())?;
+        let mut states = detailed.states;
+        let now = Instant::now();
+        let existing: HashSet<_> = states.iter().map(|state| state.id.clone()).collect();
+        self.empty_since.retain(|id, _| existing.contains(id));
+        for state in &mut states {
+            if state.occupancy == Occupancy::Empty {
+                let since = self.empty_since.entry(state.id.clone()).or_insert(now);
+                state.empty_grace_elapsed = now.duration_since(*since)
+                    >= Duration::from_millis(self.config.desktops.empty_grace_ms);
+            } else {
+                self.empty_since.remove(&state.id);
+                state.empty_grace_elapsed = false;
+            }
+        }
+        self.spare_guard
+            .stabilize(&mut states, &detailed.windows, self.window_candidates);
+        Ok(states)
+    }
+
+    fn create_desktop(&mut self) -> Result<DesktopId, String> {
+        self.backend.create().map(|desktop| desktop.id)
+    }
+
+    fn switch_desktop(&mut self, desktop: &DesktopId) -> Result<(), String> {
+        self.backend.switch_to_id(desktop)
+    }
+
+    fn remove_desktop(&mut self, desktop: &DesktopId, fallback: &DesktopId) -> Result<(), String> {
+        self.backend.remove(desktop, fallback)
+    }
+}
+
+impl AppState {
+    fn config_read(&self) -> Config {
+        self.config
+            .read()
+            .map_or_else(|_| Config::default(), |config| config.clone())
+    }
+
+    fn note_window_event(&mut self, event: WindowEvent) {
+        if event.occupancy_gain() {
+            self.window_candidates.insert(event.token(), Instant::now());
+        }
+    }
+
+    fn current_window_candidates(&self) -> HashSet<WindowToken> {
+        let now = Instant::now();
+        self.window_candidates
+            .iter()
+            .filter_map(|(token, seen)| {
+                (now.duration_since(*seen) <= WINDOW_CANDIDATE_TTL).then_some(*token)
+            })
+            .collect()
+    }
+
+    fn prune_window_candidates(&mut self) {
+        let now = Instant::now();
+        self.window_candidates
+            .retain(|_, seen| now.duration_since(*seen) <= WINDOW_CANDIDATE_TTL);
+    }
+
+    // Function purpose: Refuses to overwrite external edits that appeared after the active configuration was loaded.
+    fn save_config(&self, config: &Config) -> Result<(), String> {
+        let expected = self.config_read();
+        let disk = Config::load(&self.config_path).map_err(|error| error.to_string())?;
+        if disk != expected {
+            return Err(
+                "configuration changed externally; reload before applying tray or IPC changes"
+                    .to_string(),
+            );
+        }
+        config
+            .write_atomic(&self.config_path)
+            .map_err(|error| error.to_string())?;
+        let mut target = self
+            .config
+            .write()
+            .map_err(|_| "configuration lock poisoned".to_string())?;
+        *target = config.clone();
+        Ok(())
+    }
+
+    fn navigate(&mut self, step: Step) {
+        let config = self.config_read();
+        if !config.enabled {
+            return;
+        }
+        match self.backend.switch_relative(step, config.wheel.navigation) {
+            Ok(desktop) => {
+                let is_last = self
+                    .backend
+                    .list()
+                    .is_ok_and(|desktops| desktop.index + 1 == desktops.len());
+                if is_last {
+                    self.spare_guard.arm(desktop.id.clone());
+                }
+                self.publish(
+                    "desktop-switched",
+                    format!("desktop index {}", desktop.index),
+                );
+            }
+            Err(error) if error.contains("clamped edge") => {}
+            Err(error) => self.error(format!("desktop navigation failed: {error}")),
+        }
+    }
+
+    fn reconcile(&mut self) -> ReconcilePass {
+        if !self.backend.compatible() {
+            return ReconcilePass::Blocked;
+        }
+
+        self.prune_window_candidates();
+        let window_candidates: HashSet<_> = self.window_candidates.keys().copied().collect();
+        let config = self.config_read();
+        let result = {
+            let mut backend = AppReconcileBackend {
+                backend: &self.backend,
+                config: &config,
+                empty_since: &mut self.empty_since,
+                spare_guard: &mut self.spare_guard,
+                window_candidates: &window_candidates,
+            };
+            self.reconciler.reconcile_once(&mut backend)
+        };
+
+        match result {
+            Ok(ReconcilePass::Mutated(mutation)) => {
+                self.last_reconciliation = Some(timestamp_utc());
+                self.publish("reconciled", format!("applied {mutation:?}"));
+                ReconcilePass::Mutated(mutation)
+            }
+            Ok(pass) => {
+                self.last_reconciliation = Some(timestamp_utc());
+                pass
+            }
+            Err(error) => {
+                self.error(format!("reconciliation failed: {error}"));
+                ReconcilePass::Blocked
+            }
+        }
+    }
+
+    // Function purpose: Builds diagnostics against cloned reconciliation state so observation cannot advance grace or spare confirmation.
+    fn diagnostic_snapshot(&self) -> Result<Vec<crate::reconciliation::DesktopState>, String> {
+        let config = self.config_read();
+        let mut empty_since = self.empty_since.clone();
+        let mut spare_guard = self.spare_guard.clone();
+        let window_candidates = self.current_window_candidates();
+        let mut backend = AppReconcileBackend {
